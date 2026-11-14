@@ -10,3 +10,5 @@ build/
 tmp/
 .DS_Store
 Thumbs.db
+goldcheck-demo/
+goldcheck-report.html

@@ -118,7 +118,7 @@ class Shrink(unittest.TestCase):
 
     def test_demo_silent_failures_shrink_to_tiny_verified_databases(self):
         before = self._digest()
-        expected = {"q02": 1, "q03": 2, "q04": 2, "q08": 3}
+        expected = {"q02": 1, "q03": 4, "q04": 2, "q08": 3}
         for qid, rows in expected.items():
             cx = shrink.shrink(self.db, self.questions[qid], self.answers[qid])
             self.assertEqual(cx.rows, rows, qid)

@@ -34,7 +34,7 @@ python -m goldcheck demo
 It builds a fictional shop database, scores a deliberately careless agent and writes `goldcheck-demo/report.html`:
 
 ```
-Shrunk 4 silent difference(s) to 1-3 row(s) each; see the report.
+Shrunk 4 silent difference(s) to 1-4 row(s) each; see the report.
 7/12 correct (58%, 95% interval 32-81%)
 4 ran cleanly but returned the wrong result; 1 failed visibly.
 ```

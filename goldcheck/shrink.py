@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import os
+import random
 import shutil
 import sqlite3
 import tempfile
@@ -28,6 +29,7 @@ from .core import SILENT, InputError, compare, lock_readonly, run_sql
 
 
 SEED_LIMIT = 20_000      # largest per-table guess worth trying
+SAMPLE_SIZES = (1000, 100, 10)  # random-sample guesses for large tables, largest first
 TMP_INDEX = "goldcheck_tmp_"
 
 
@@ -176,6 +178,40 @@ def _dangling(con, fks):
     return bad
 
 
+def _deleted_keys(con, fks, deletions):
+    """Before a deletion: {fk index: [key tuple, ...]} of parent rows about to go."""
+    keys = {}
+    for i, (_child, _frm, parent, to) in enumerate(fks):
+        if parent in deletions:
+            keys[i] = con.execute(
+                f"SELECT {', '.join(_q(t) for t in to)} FROM {_q(parent)} "
+                "WHERE rowid IN (SELECT value FROM json_each(?))", (json.dumps(deletions[parent]),)).fetchall()
+    return keys
+
+
+def _creates_dangling(con, fks, keys, allowed) -> bool:
+    """After a deletion: does any child now point at a deleted key that no parent row still has?
+
+    Only children of the deleted keys are looked at (through the helper indexes), so the
+    cost follows the size of the deletion, not the size of the tables.
+    """
+    for i, rows in keys.items():
+        child, frm, parent, to = fks[i]
+        rows = [r for r in rows if all(v is not None for v in r)]
+        if not rows:
+            continue
+        if any(isinstance(v, bytes) for r in rows for v in r):
+            return bool(_dangling(con, [fks[i]]) - {(0, rid) for (j, rid) in allowed if j == i})
+        on = " AND ".join(f"c.{_q(f)} = json_extract(j.value, '$[{k}]')" for k, f in enumerate(frm))
+        still = " AND ".join(f"p.{_q(t)} = c.{_q(f)}" for f, t in zip(frm, to))
+        for (rid,) in con.execute(
+                f"SELECT c.rowid FROM json_each(?) j CROSS JOIN {_q(child)} c ON {on} "
+                f"WHERE NOT EXISTS (SELECT 1 FROM {_q(parent)} p WHERE {still})", (json.dumps(rows),)):
+            if (i, rid) not in allowed:
+                return True
+    return False
+
+
 def _literals(sqls):
     """String literals in the SQL texts ('' is an escaped quote)."""
     found = set()
@@ -271,6 +307,11 @@ def _seed_candidates(con, reads, fks, sqls):
     return out
 
 
+def _has_content(result) -> bool:
+    """True when a (columns, rows) result has at least one non-NULL value."""
+    return bool(result) and any(v is not None for row in result[1] for v in row)
+
+
 def _observe(con, gold_sql, agent_sql, ordered, timeout):
     """Return (verdict, detail, gold, agent); verdict None when either query errors."""
     lock_readonly(con)
@@ -315,24 +356,31 @@ def shrink(db_path, question, agent_sql, timeout=5.0, max_checks=3000, max_secon
         fks = _foreign_keys(con, reads)
         _helper_indexes(con, reads)
         allowed = _dangling(con, fks)
-        parents = {fk[2] for fk in fks}
+
+        informative = False  # set after the first check: must the expected result stay non-empty?
 
         def holds():
             nonlocal checks
             if checks >= max_checks or time.monotonic() - start > max_seconds:
                 raise _Budget
             checks += 1
-            return _observe(con, gold_sql, agent_sql, ordered, timeout)[0] in SILENT
+            verdict, _, gold, _ = _observe(con, gold_sql, agent_sql, ordered, timeout)
+            if verdict not in SILENT:
+                return False
+            # A counterexample on which the expected result is empty (or all NULL) only says
+            # "they differ on almost nothing". When the full database gives a real expected
+            # result, keep one, so the rows show the difference on actual data.
+            return not informative or _has_content(gold)
 
         def try_delete(deletions):
             """Delete {table: rowids} tentatively; keep it only if the failure still holds."""
+            keys = _deleted_keys(con, fks, deletions)
             con.execute("SAVEPOINT cand")
             for table, rowids in deletions.items():
                 con.execute(f"DELETE FROM {_q(table)} WHERE rowid IN (SELECT value FROM json_each(?))",
                             (json.dumps(rowids),))
             try:
-                ok = ((not parents & set(deletions) or _dangling(con, fks) <= allowed)
-                      and holds())
+                ok = not _creates_dangling(con, fks, keys, allowed) and holds()
             except BaseException:
                 con.execute("ROLLBACK TO cand")
                 con.execute("RELEASE cand")
@@ -346,6 +394,7 @@ def shrink(db_path, question, agent_sql, timeout=5.0, max_checks=3000, max_secon
         if not holds():
             con.close()
             return None
+        informative = _has_content(_observe(con, gold_sql, agent_sql, ordered, timeout)[2])
 
         budget_exhausted, one_minimal = False, False
         try:
@@ -358,6 +407,16 @@ def shrink(db_path, question, agent_sql, timeout=5.0, max_checks=3000, max_secon
                     for t in proposal:
                         keep[t] = [r for r in keep[t] if r in seed[t]]
                     break
+            # Then, for each large table, guess that a small random sample still shows the
+            # difference (true when it is spread over many rows, as with a wrong COUNT).
+            rng = random.Random(0)
+            for name in sorted(keep, key=lambda n: -len(keep[n])):
+                for size in SAMPLE_SIZES:
+                    if len(keep[name]) <= size * 2:
+                        continue
+                    sample = set(rng.sample(keep[name], size))
+                    if try_delete({name: [r for r in keep[name] if r not in sample]}):
+                        keep[name] = [r for r in keep[name] if r in sample]
             while True:
                 changed = False
                 for name in sorted(keep, key=lambda n: -len(keep[n])):

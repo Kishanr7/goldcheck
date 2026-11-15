@@ -4,7 +4,10 @@ import sqlite3
 import tempfile
 import unittest
 
-from goldcheck import core, demo, report, shrink
+import subprocess
+import sys
+
+from goldcheck import blame, core, demo, lock, mcp, report, shrink
 from goldcheck.__main__ import main
 
 
@@ -115,10 +118,9 @@ class Shrink(unittest.TestCase):
 
     def test_demo_silent_failures_shrink_to_tiny_verified_databases(self):
         before = self._digest()
-        source = shrink.load_source(self.db)
         expected = {"q02": 1, "q03": 2, "q04": 2, "q08": 3}
         for qid, rows in expected.items():
-            cx = shrink.shrink(self.db, self.questions[qid], self.answers[qid], source=source)
+            cx = shrink.shrink(self.db, self.questions[qid], self.answers[qid])
             self.assertEqual(cx.rows, rows, qid)
             self.assertIn(cx.verdict, core.SILENT, qid)
             self.assertTrue(cx.one_minimal and not cx.budget_exhausted, qid)
@@ -155,8 +157,30 @@ class Shrink(unittest.TestCase):
         con.close()
         q = {"id": "fk", "question": "?", "gold_sql": "SELECT COUNT(*) FROM child"}
         cx = shrink.shrink(path, q, "SELECT COUNT(*) FROM child WHERE id > 99")
-        self.assertEqual(sorted(cx.tables), ["child", "parent"])
-        self.assertEqual(cx.rows, 2)
+        self.assertEqual(sorted(cx.tables), ["child", "parent"])  # parent is unread but referenced
+        self.assertEqual((cx.rows, cx.context_rows), (1, 1))
+        out = os.path.join(self.dir.name, "fk-cx.sqlite")
+        shrink.write(cx, q, "SELECT COUNT(*) FROM child WHERE id > 99", out)
+        check = sqlite3.connect(out)
+        self.assertEqual(check.execute("PRAGMA foreign_key_check").fetchall(), [])
+        check.close()
+
+    def test_literals_handle_escaped_quotes(self):
+        self.assertEqual(shrink._literals(["SELECT 1 WHERE a = 'O''Brien' AND b LIKE '%x%'", "SELECT ''"]),
+                         {"O'Brien", "%x%"})
+
+    def test_reduced_parent_keeps_children_consistent(self):
+        path = os.path.join(self.dir.name, "fk2.sqlite")
+        con = sqlite3.connect(path)
+        con.executescript("CREATE TABLE parent (id INTEGER PRIMARY KEY, v INT);"
+                          "CREATE TABLE child (id INTEGER PRIMARY KEY, parent_id INTEGER REFERENCES parent(id));"
+                          "INSERT INTO parent VALUES (1,5),(2,6),(3,7);"
+                          "INSERT INTO child VALUES (1,1),(2,2),(3,3),(4,9);")  # child 4 already dangles
+        con.commit()
+        con.close()
+        gold = "SELECT COUNT(*) FROM child c JOIN parent p ON p.id = c.parent_id"
+        cx = shrink.shrink(path, {"id": "j", "question": "?", "gold_sql": gold}, gold + " WHERE p.v > 100")
+        self.assertEqual(cx.rows, 2)  # one child and its parent; no new dangling reference
 
     def test_report_shows_counterexample_escaped(self):
         con = core.connect_readonly(self.db)
@@ -167,9 +191,115 @@ class Shrink(unittest.TestCase):
         r.counterexample.tables["customers"][1][0] = (13, "<img src=x>", "Northwick", "Consumer")
         html = report.render(results, core.summarise(results))
         self.assertIn("Smallest database that shows the difference", html)
-        self.assertIn("3 rows instead of 992", html)
+        self.assertRegex(html, r"3 rows instead of \d+")
         self.assertNotIn("<img src=x>", html)
         self.assertIn("INSERT INTO", html)
+
+
+class Blame(unittest.TestCase):
+    def test_split_respects_quotes_and_subqueries(self):
+        parts = blame.split("SELECT a, 'x where y' FROM t JOIN (SELECT b FROM u WHERE c) s ON 1 "
+                            "WHERE \"order\" = 'group by' GROUP BY a ORDER BY a LIMIT 3;")
+        self.assertEqual(parts["FROM"], "t JOIN (SELECT b FROM u WHERE c) s ON 1")
+        self.assertEqual(parts["WHERE"], "\"order\" = 'group by'")
+        self.assertEqual((parts["GROUP BY"], parts["ORDER BY"], parts["LIMIT"]), ("a", "a", "3"))
+        self.assertIsNone(blame.split("SELECT 1 UNION SELECT 2"))
+        self.assertIsNone(blame.split("WITH x AS (SELECT 1) SELECT * FROM x"))
+
+    def test_demo_failures_are_pinned_to_one_clause(self):
+        with tempfile.TemporaryDirectory() as d:
+            db, q, a = demo.build(d)
+            qs = {x["id"]: x for x in core.load_questions(q)}
+            ans, _ = core.load_answers(a)
+            got = {}
+            for i in ("q02", "q03", "q04", "q08"):
+                cx = shrink.shrink(db, qs[i], ans[i])
+                b = blame.explain(db, qs[i]["gold_sql"], ans[i], cx)
+                got[i] = (b["clause"], b["full_db"])
+        self.assertEqual(got, {"q02": ("WHERE", True), "q03": ("WHERE", True),
+                               "q04": ("SELECT", True), "q08": ("FROM", True)})
+
+
+class CompareAndLock(unittest.TestCase):
+    OLD = ("SELECT c.city, SUM(oi.qty * oi.unit_price) FROM order_items oi JOIN orders o ON o.id = oi.order_id "
+           "JOIN customers c ON c.id = o.customer_id WHERE o.status = 'completed' GROUP BY c.city")
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.db, self.q, self.a = demo.build(self.dir.name)
+        self.p = lambda *x: os.path.join(self.dir.name, *x)
+
+    def tearDown(self):
+        self.dir.cleanup()
+
+    def test_compare_equal_and_different_pairs(self):
+        same = self.OLD.replace("WHERE o.status = 'completed'", "WHERE o.status IN ('completed')")
+        changed = self.OLD.replace("= 'completed'", "<> 'cancelled'")
+        with open(self.p("old.sql"), "w") as fh:
+            fh.write(self.OLD)
+        self.assertEqual(main(["compare", "--db", self.db, "--old", self.p("old.sql"), "--new", same,
+                               "--out", self.p("c1.html")]), 0)
+        pairs = self.p("pairs.jsonl")
+        with open(pairs, "w") as fh:
+            fh.write(json.dumps({"id": "same", "old": self.OLD, "new": same}) + chr(10))
+            fh.write(json.dumps({"id": "pending", "old": self.OLD, "new": changed, "note": "status filter"}) + chr(10))
+        self.assertEqual(main(["compare", "--db", self.db, "--pairs", pairs, "--out", self.p("c2.html"),
+                               "--export-tests", self.p("locked")]), 1)
+        with open(self.p("c2.html"), encoding="utf-8") as fh:
+            html = fh.read()
+        self.assertIn("1 of 2 query pairs return the same result", html)
+        self.assertIn("Old query on these rows", html)
+        self.assertEqual(sorted(os.listdir(self.p("locked"))), ["README.md", "pending", "test_regressions.py"])
+
+    def test_bad_pairs_file_and_missing_new(self):
+        bad = self.p("bad.jsonl")
+        with open(bad, "w") as fh:
+            fh.write('{"id": "x", "old": "SELECT 1"}' + chr(10))
+        self.assertEqual(main(["compare", "--db", self.db, "--pairs", bad]), 2)
+        with self.assertRaises(SystemExit):
+            main(["compare", "--db", self.db, "--old", "SELECT 1"])
+
+    def test_exported_tests_fail_on_bug_and_pass_when_fixed(self):
+        out = self.p("locked")
+        self.assertEqual(main(["run", "--db", self.db, "--questions", self.q, "--answers", self.a, "--shrink",
+                               "--export-tests", out, "--out", self.p("r.html")]), 0)
+        run = lambda: subprocess.run([sys.executable, "-m", "unittest", "discover", "-s", out],
+                                     capture_output=True, text=True)
+        before = run()
+        self.assertNotEqual(before.returncode, 0)
+        self.assertIn("failures=4", before.stderr)
+        for case in ("q02", "q03", "q04", "q08"):
+            with open(os.path.join(out, case, "reference.sql")) as fh:
+                fixed = fh.read()
+            with open(os.path.join(out, case, "query.sql"), "w") as fh:
+                fh.write(fixed)
+        self.assertEqual(run().returncode, 0)
+        with self.assertRaises(FileExistsError):
+            lock.export([], out)
+
+
+class Mcp(unittest.TestCase):
+    def test_initialize_list_and_call(self):
+        _, init, _ = mcp.handle({"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                                 "params": {"protocolVersion": "2025-06-18"}})
+        self.assertEqual(init["protocolVersion"], "2025-06-18")
+        self.assertIsNone(mcp.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}))
+        self.assertEqual(mcp.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})[1]["tools"][0]["name"],
+                         "compare_queries")
+        with tempfile.TemporaryDirectory() as d:
+            db, _, _ = demo.build(d)
+            _, res, _ = mcp.handle({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
+                "name": "compare_queries", "arguments": {"db_path": db, "sql": "SELECT COUNT(customer_id) FROM orders",
+                                                          "trusted_sql": "SELECT COUNT(DISTINCT customer_id) FROM orders"}}})
+            data = json.loads(res["content"][0]["text"])
+            self.assertFalse(res["isError"])
+            self.assertEqual((data["same_result"], data["counterexample"]["rows"], data["cause"]["clause"]),
+                             (False, 2, "SELECT"))
+            _, bad, _ = mcp.handle({"jsonrpc": "2.0", "id": 4, "method": "tools/call", "params": {
+                "name": "compare_queries", "arguments": {"db_path": db, "sql": "DELETE FROM orders",
+                                                          "trusted_sql": "SELECT 1"}}})
+            self.assertEqual(json.loads(bad["content"][0]["text"])["verdict"], "sql_error")
+        self.assertEqual(mcp.handle({"jsonrpc": "2.0", "id": 5, "method": "nope"})[2]["code"], -32601)
 
 
 class Cli(unittest.TestCase):

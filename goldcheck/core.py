@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import sqlite3
 import time
 from collections import Counter
@@ -100,9 +101,9 @@ def _signature(rows, j):
 def compare(gold_cols, gold_rows, ans_cols, ans_rows, ordered: bool = False):
     """Return (verdict, detail). Column names and column order are ignored."""
     if not ans_rows and gold_rows:
-        return "empty_result", f"agent returned 0 rows, expected {len(gold_rows)}"
+        return "empty_result", f"got 0 rows, expected {len(gold_rows)}"
     if len(ans_rows) != len(gold_rows):
-        return "row_count_mismatch", f"agent returned {len(ans_rows)} rows, expected {len(gold_rows)}"
+        return "row_count_mismatch", f"got {len(ans_rows)} rows, expected {len(gold_rows)}"
     n_gold, n_ans = len(gold_cols), len(ans_cols)
     ans_sigs = [_signature(ans_rows, j) for j in range(n_ans)]
     used, mapping = set(), []
@@ -111,10 +112,10 @@ def compare(gold_cols, gold_rows, ans_cols, ans_rows, ordered: bool = False):
         hit = next((k for k in range(n_ans) if k not in used and ans_sigs[k] == sig), None)
         if hit is None:
             if n_ans < n_gold:
-                return "column_mismatch", f"agent returned {n_ans} columns, expected {n_gold}"
+                return "column_mismatch", f"got {n_ans} columns, expected {n_gold}"
             if len(gold_rows) == 1 and n_gold == 1 and n_ans == 1:
-                return "value_mismatch", f"agent returned {ans_rows[0][0]!r}, expected {gold_rows[0][0]!r}"
-            return "value_mismatch", f"no agent column holds the expected values of column {j + 1}"
+                return "value_mismatch", f"got {ans_rows[0][0]!r}, expected {gold_rows[0][0]!r}"
+            return "value_mismatch", f"no column of the result holds the expected values of column {j + 1}"
         used.add(hit)
         mapping.append(hit)
     g = [tuple(norm(v) for v in r) for r in gold_rows]
@@ -190,6 +191,52 @@ def load_answers(path: str):
         except (ValueError, KeyError, TypeError):
             problems.append(f"line {n}: not a JSON object with an 'id'")
     return answers, problems
+
+
+def _sql_arg(value: str) -> str:
+    """A --old/--new value: a path to a .sql file if one exists, otherwise the SQL itself."""
+    if os.path.isfile(value):
+        with open(value, encoding="utf-8") as fh:
+            return fh.read().strip()
+    return value.strip()
+
+
+def load_pairs(path: str = None, old: str = None, new: str = None, ordered: bool = False):
+    """Return (questions, answers) for compare mode: old SQL plays gold, new SQL plays the agent.
+
+    Either a JSON Lines file of {"id", "old", "new", "note"?, "ordered"?} or one --old/--new pair.
+    """
+    if path is None:
+        pairs = [{"id": "pair", "old": _sql_arg(old), "new": _sql_arg(new), "ordered": ordered}]
+    else:
+        pairs = []
+        try:
+            with open(path, encoding="utf-8") as fh:
+                lines = fh.readlines()
+        except OSError as exc:
+            raise InputError(f"Cannot read pairs file {path}: {exc}") from exc
+        for n, line in enumerate(lines, 1):
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+                if not (row.get("id") and row.get("old") and row.get("new")):
+                    raise ValueError
+            except (ValueError, AttributeError):
+                raise InputError(f"{path} line {n}: need a JSON object with 'id', 'old' and 'new'") from None
+            pairs.append(row)
+    if not pairs:
+        raise InputError("No query pairs to compare.")
+    questions, answers, seen = [], {}, set()
+    for p in pairs:
+        pid = str(p["id"])
+        if pid in seen:
+            raise InputError(f"Duplicate pair id: {pid}")
+        seen.add(pid)
+        questions.append({"id": pid, "question": p.get("note") or "old vs new query", "category": "pairs",
+                          "gold_sql": p["old"], "ordered": bool(p.get("ordered", ordered))})
+        answers[pid] = p["new"]
+    return questions, answers
 
 
 def score(con, questions, answers, timeout: float = 5.0):

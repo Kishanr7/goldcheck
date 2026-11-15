@@ -1,22 +1,34 @@
 """Find a small database on which gold SQL and agent SQL still disagree.
 
-The source database is only read. Every candidate is a fresh in-memory copy of the
-schema with a subset of the rows, locked read-only before any question SQL runs.
-A candidate is kept only if both queries still run and the comparison is still a
-silent failure (wrong result, not an error). The search deletes chunks of rows
-table by table (delta debugging) until no single row can be removed or the budget
-runs out.
+The source file is never opened for writing. goldcheck copies it to a private
+temporary file, then deletes rows from the tables the two queries actually read
+(found from SQLite's own query plan), in chunks of shrinking size (delta
+debugging). A deletion is kept only if both queries still run and the comparison
+is still a silent failure. Each deletion happens inside a SAVEPOINT and is rolled
+back when it does not keep the failure. Question SQL only ever runs under the same
+SELECT-only authorizer and timeout as normal scoring.
+
+Declared foreign keys are respected: a deletion may not create a dangling
+reference that did not already exist in the source.
+
+The result keeps the full original rows, every table definition, and only the
+kept rows of the tables the queries read.
 """
 from __future__ import annotations
 
+import json
 import os
+import shutil
 import sqlite3
+import tempfile
 import time
 from dataclasses import dataclass, field
 
 from .core import SILENT, InputError, compare, lock_readonly, run_sql
 
-MAX_SOURCE_ROWS = 200_000
+
+SEED_LIMIT = 20_000      # largest per-table guess worth trying
+TMP_INDEX = "goldcheck_tmp_"
 
 
 @dataclass
@@ -24,9 +36,9 @@ class Counterexample:
     question_id: str
     verdict: str
     detail: str
-    tables: dict                     # name -> (columns, rows); only tables with rows are listed
-    source_rows: int
-    rows: int
+    tables: dict                     # name -> (columns, rows); tables the queries read that kept rows
+    source_rows: int                 # rows in the tables the queries read
+    rows: int                        # kept rows in the tables the queries read
     checks: int
     seconds: float
     one_minimal: bool                # no single remaining row can be deleted
@@ -34,11 +46,14 @@ class Counterexample:
     verified: bool = False           # re-checked on the written file
     gold: tuple = ((), ())           # (columns, rows) on the counterexample
     agent: tuple = ((), ())
+    ordered: bool = False            # row order is part of the comparison
+    blame: object = None             # blame.explain() result: the clause that makes the difference
+    context_rows: int = 0            # rows of unread tables included so references are not left dangling
     schema: list = field(default_factory=list)
 
     def to_sql(self) -> str:
         """A script that recreates the counterexample in any SQLite shell."""
-        lines = [s.rstrip(";") + ";" for s in self.schema]
+        lines = [s.rstrip().rstrip(";") + ";" for s in self.schema]
         for name, (cols, rows) in self.tables.items():
             col_list = ", ".join(_q(c) for c in cols)
             for r in rows:
@@ -66,120 +81,333 @@ def _lit(v) -> str:
     return "'" + str(v).replace("'", "''") + "'"
 
 
-def load_source(path: str):
-    """Return (schema statements, {table: (insertable columns, rows)}, has_foreign_keys)."""
-    try:
-        con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
-        objects = con.execute(
-            "SELECT type, name, sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' "
-            "AND type IN ('table', 'index', 'view') "
-            "ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 ELSE 2 END, rowid").fetchall()
-    except sqlite3.Error as exc:
-        raise InputError(f"Cannot open database read-only: {path} ({exc})") from exc
-    try:
-        schema, tables, has_fk, total = [], {}, False, 0
-        for kind, name, sql in objects:
-            schema.append(sql)
-            if kind != "table" or sql.upper().startswith("CREATE VIRTUAL"):
+def tables_read(con, sqls) -> set:
+    """Tables in the main schema that any of `sqls` opens for reading, from EXPLAIN."""
+    roots = {}
+    for kind, name, tbl, root in con.execute(
+            "SELECT type, name, tbl_name, rootpage FROM sqlite_master WHERE type IN ('table', 'index')"):
+        if root:
+            roots[root] = tbl
+    found = set()
+    for sql in sqls:
+        for row in con.execute("EXPLAIN " + sql).fetchall():
+            if row[1] == "OpenRead" and row[4] == 0 and row[3] in roots:
+                found.add(roots[row[3]])
+    return {t for t in found if not t.startswith("sqlite_")}
+
+
+def _fk_list(con, child):
+    """Declared foreign keys of `child` as [(parent, [child cols], [parent cols])]."""
+    groups, out = {}, []
+    for fid, _seq, parent, frm, to, *_ in con.execute(f"PRAGMA foreign_key_list({_q(child)})"):
+        groups.setdefault(fid, [parent, [], []])
+        groups[fid][1].append(frm)
+        groups[fid][2].append(to)
+    names = {r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type = 'table'")}
+    for parent, frm, to in groups.values():
+        if parent not in names:
+            continue
+        if any(t is None for t in to):
+            pk = [r[1] for r in sorted(con.execute(f"PRAGMA table_info({_q(parent)})"), key=lambda r: r[5]) if r[5]]
+            to = pk if len(pk) == len(frm) else to
+        if not any(t is None for t in to):
+            out.append((parent, frm, to))
+    return out
+
+
+def _foreign_keys(con, tables):
+    """[(child, [child cols], parent, [parent cols])] where both ends are in `tables`."""
+    # A parent outside `tables` is never reduced, so it cannot gain dangling references.
+    return [(child, frm, parent, to) for child in tables
+            for parent, frm, to in _fk_list(con, child) if parent in tables]
+
+
+def _referenced_rows(con, keep, reads):
+    """Rows of tables the queries do not read that kept rows point at, following chains."""
+    extra = {}
+    queue = [t for t in keep if keep[t]]
+    while queue:
+        child = queue.pop()
+        ids = keep.get(child) or sorted(extra.get(child, ()))
+        for parent, frm, to in _fk_list(con, child):
+            if parent in reads:
+                continue  # already consistent: deletions there never create new dangling references
+            on = " AND ".join(f"p.{_q(t)} = c.{_q(f)}" for f, t in zip(frm, to))
+            found = {r[0] for r in con.execute(
+                f"SELECT p.rowid FROM json_each(?) j CROSS JOIN {_q(child)} c ON c.rowid = j.value "
+                f"CROSS JOIN {_q(parent)} p ON {on}", (json.dumps(ids),))}
+            new = found - extra.get(parent, set())
+            if new:
+                extra.setdefault(parent, set()).update(new)
+                queue.append(parent)
+    return extra
+
+
+def _helper_indexes(con, reads):
+    """Index both ends of every declared foreign key that touches a read table.
+
+    Only in the private working copy, so reference checks stay linear on large tables.
+    Query results do not depend on indexes; they are left out of the exported schema.
+    """
+    seen, n = set(), 0
+    tables = set(reads)
+    for child in list(tables) + [r[0] for r in con.execute("SELECT name FROM sqlite_master WHERE type='table'")]:
+        for parent, frm, to in _fk_list(con, child):
+            if child not in tables and parent not in tables:
                 continue
-            info = con.execute(f"PRAGMA table_xinfo({_q(name)})").fetchall()
-            cols = [row[1] for row in info if row[6] == 0]  # skip generated/hidden columns
-            rows = con.execute(f"SELECT {', '.join(_q(c) for c in cols)} FROM {_q(name)}").fetchall()
-            total += len(rows)
-            if total > MAX_SOURCE_ROWS:
-                raise InputError(f"Database has more than {MAX_SOURCE_ROWS} rows; shrink a sample of it instead.")
-            has_fk = has_fk or bool(con.execute(f"PRAGMA foreign_key_list({_q(name)})").fetchall())
-            tables[name] = (cols, rows)
-        return schema, tables, has_fk
-    finally:
-        con.close()
+            for table, cols in ((child, frm), (parent, to)):
+                key = (table, tuple(cols))
+                if key in seen:
+                    continue
+                seen.add(key)
+                n += 1
+                con.execute(f"CREATE INDEX {_q(TMP_INDEX + str(n))} ON {_q(table)} ({', '.join(_q(c) for c in cols)})")
 
 
-def _build(schema, tables, current, check_fk):
-    con = sqlite3.connect(":memory:")
-    for sql in schema:
-        con.execute(sql)
-    for name, rows in current.items():
-        if rows:
-            cols = tables[name][0]
-            con.executemany(f"INSERT INTO {_q(name)} ({', '.join(_q(c) for c in cols)}) "
-                            f"VALUES ({', '.join('?' * len(cols))})", rows)
-    if check_fk and con.execute("PRAGMA foreign_key_check").fetchone():
-        con.close()
-        return None
-    return lock_readonly(con)
+def _dangling(con, fks):
+    """Set of (fk index, child rowid) that point at a missing parent row."""
+    bad = set()
+    for i, (child, frm, parent, to) in enumerate(fks):
+        on = " AND ".join(f"p.{_q(t)} = c.{_q(f)}" for f, t in zip(frm, to))
+        notnull = " AND ".join(f"c.{_q(f)} IS NOT NULL" for f in frm)
+        sql = (f"SELECT c.rowid FROM {_q(child)} c WHERE {notnull} "
+               f"AND NOT EXISTS (SELECT 1 FROM {_q(parent)} p WHERE {on})")
+        bad.update((i, r[0]) for r in con.execute(sql))
+    return bad
+
+
+def _literals(sqls):
+    """String literals in the SQL texts ('' is an escaped quote)."""
+    found = set()
+    for sql in sqls:
+        i = 0
+        while (i := sql.find("'", i)) != -1:
+            j, buf = i + 1, []
+            while j < len(sql):
+                if sql[j] == "'" and sql[j + 1:j + 2] == "'":
+                    buf.append("'")
+                    j += 2
+                elif sql[j] == "'":
+                    break
+                else:
+                    buf.append(sql[j])
+                    j += 1
+            if buf:
+                found.add("".join(buf))
+            i = j + 1
+    return found
+
+
+def _parents_of(con, fk, ids):
+    child, frm, parent, to = fk
+    on = " AND ".join(f"p.{_q(b)} = c.{_q(a)}" for a, b in zip(frm, to))
+    return {r[0] for r in con.execute(
+        f"SELECT p.rowid FROM json_each(?) j CROSS JOIN {_q(child)} c ON c.rowid = j.value "
+        f"CROSS JOIN {_q(parent)} p ON {on}", (json.dumps(sorted(ids)),))}
+
+
+def _children_of(con, fk, ids):
+    child, frm, parent, to = fk
+    on = " AND ".join(f"p.{_q(b)} = c.{_q(a)}" for a, b in zip(frm, to))
+    return {r[0] for r in con.execute(
+        f"SELECT c.rowid FROM json_each(?) j CROSS JOIN {_q(parent)} p ON p.rowid = j.value "
+        f"CROSS JOIN {_q(child)} c ON {on}", (json.dumps(sorted(ids)),))}
+
+
+def _close_parents(con, fks, seed):
+    """Add every row that seeded rows point at, until nothing new appears."""
+    frontier = {t: set(v) for t, v in seed.items()}
+    while frontier:
+        nxt = {}
+        for fk in fks:
+            child, parent = fk[0], fk[2]
+            if frontier.get(child):
+                new = _parents_of(con, fk, frontier[child]) - seed.get(parent, set())
+                if new:
+                    seed.setdefault(parent, set()).update(new)
+                    nxt.setdefault(parent, set()).update(new)
+        if any(len(v) > SEED_LIMIT for v in seed.values()):
+            return None
+        frontier = nxt
+    return seed
+
+
+def _seed_candidates(con, reads, fks, sqls):
+    """Guesses, smallest-effort first, each {table: set(rowids)}.
+
+    Rows equal to (or LIKE) a string literal in either query, plus: (1) the rows that point
+    at them and everything those point at; (2) only what the matched rows point at.
+    Tables with no seeded row are left untouched by the guess. Only proposals: the caller
+    verifies each one.
+    """
+    lits = sorted(_literals(sqls))
+    if not lits:
+        return []
+    matched = {}
+    for t in reads:
+        cols = [r[1] for r in con.execute(f"PRAGMA table_xinfo({_q(t)})") if r[6] == 0]
+        conds, args = [], []
+        for c in cols:
+            for lit in lits:
+                conds.append(f"{_q(c)} LIKE ?" if "%" in lit or "_" in lit else f"{_q(c)} = ?")
+                args.append(lit)
+        hits = set()
+        for k in range(0, len(conds), 500):  # stay under SQLite's variable limit
+            hits.update(r[0] for r in con.execute(
+                f"SELECT rowid FROM {_q(t)} WHERE {' OR '.join(conds[k:k + 500])}", args[k:k + 500]))
+        if hits:
+            matched[t] = hits
+    if not matched or any(len(v) > SEED_LIMIT for v in matched.values()):
+        return []
+    out = []
+    with_children = {t: set(v) for t, v in matched.items()}
+    for fk in fks:
+        if matched.get(fk[2]):
+            with_children.setdefault(fk[0], set()).update(_children_of(con, fk, matched[fk[2]]))
+    for guess in (with_children, {t: set(v) for t, v in matched.items()}):
+        closed = _close_parents(con, fks, guess)
+        if closed and closed not in out:
+            out.append(closed)
+    return out
 
 
 def _observe(con, gold_sql, agent_sql, ordered, timeout):
     """Return (verdict, detail, gold, agent); verdict None when either query errors."""
-    gc, gr, gerr = run_sql(con, gold_sql, timeout)
-    ac, ar, aerr = run_sql(con, agent_sql, timeout)
+    lock_readonly(con)
+    try:
+        gc, gr, gerr = run_sql(con, gold_sql, timeout)
+        ac, ar, aerr = run_sql(con, agent_sql, timeout)
+    finally:
+        con.set_authorizer(None)
     if gerr or aerr:
         return None, gerr or aerr, None, None
     verdict, detail = compare(gc, gr, ac, ar, ordered)
     return verdict, detail, (gc, gr), (ac, ar)
 
 
-def shrink(db_path, question, agent_sql, timeout=5.0, max_checks=3000, max_seconds=60.0, source=None):
-    """Return a Counterexample, or None if the two queries do not disagree silently on the full database."""
-    schema, tables, has_fk = source or load_source(db_path)
+def shrink(db_path, question, agent_sql, timeout=5.0, max_checks=3000, max_seconds=60.0, workdir=None):
+    """Return a Counterexample, or None if the queries do not disagree silently on the database."""
     gold_sql, ordered = question["gold_sql"], bool(question.get("ordered"))
     start, checks = time.monotonic(), 0
-
-    def fails(current):
-        nonlocal checks
-        if checks >= max_checks or time.monotonic() - start > max_seconds:
-            raise _Budget
-        checks += 1
-        con = _build(schema, tables, current, has_fk)
-        if con is None:
-            return False
-        try:
-            return _observe(con, gold_sql, agent_sql, ordered, timeout)[0] in SILENT
-        finally:
-            con.close()
-
-    current = {name: list(rows) for name, (_, rows) in tables.items()}
-    source_rows = sum(len(r) for r in current.values())
-    if not fails(current):
-        return None
-
-    budget_exhausted, one_minimal = False, False
     try:
-        while True:
-            changed = False
-            for name in sorted(current, key=lambda n: -len(current[n])):
-                rows = current[name]
-                if rows and fails({**current, name: []}):
-                    current[name], changed = [], True
-                    continue
-                n = 2
-                while len(rows) >= 2:
-                    size = -(-len(rows) // n)
-                    for s in range(0, len(rows), size):
-                        candidate = rows[:s] + rows[s + size:]
-                        if fails({**current, name: candidate}):
-                            rows, changed, n = candidate, True, max(2, n - 1)
-                            break
-                    else:
-                        if n >= len(rows):
-                            break
-                        n = min(len(rows), n * 2)
-                current[name] = rows
-            if not changed:
-                one_minimal = True
-                break
-    except _Budget:
-        budget_exhausted = True
+        src = lock_readonly(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True))
+        try:
+            reads = tables_read(src, [gold_sql, agent_sql])
+        finally:
+            src.close()
+    except (sqlite3.Error, sqlite3.Warning):
+        return None  # a query that cannot even be planned cannot be a silent failure
+    tmpdir = tempfile.mkdtemp(prefix="goldcheck-", dir=workdir)
+    work = os.path.join(tmpdir, "work.sqlite")
+    try:
+        shutil.copyfile(db_path, work)
+        con = sqlite3.connect(work, isolation_level=None)
+        con.execute("PRAGMA journal_mode=MEMORY")
+        con.execute("PRAGMA synchronous=OFF")
+        con.execute("PRAGMA foreign_keys=OFF")
+        for (name,) in con.execute("SELECT name FROM sqlite_master WHERE type = 'trigger'").fetchall():
+            con.execute(f"DROP TRIGGER {_q(name)}")
+        try:
+            keep = {t: [r[0] for r in con.execute(f"SELECT rowid FROM {_q(t)} ORDER BY rowid")] for t in reads}
+        except sqlite3.OperationalError as exc:
+            con.close()
+            raise InputError(f"Cannot shrink this database ({exc}); WITHOUT ROWID tables are not supported.") from exc
+        fks = _foreign_keys(con, reads)
+        _helper_indexes(con, reads)
+        allowed = _dangling(con, fks)
+        parents = {fk[2] for fk in fks}
 
-    con = _build(schema, tables, current, has_fk)
-    verdict, detail, gold, agent = _observe(con, gold_sql, agent_sql, ordered, timeout)
-    con.close()
-    kept = {name: (tables[name][0], rows) for name, rows in current.items() if rows}
-    return Counterexample(
-        question_id=question["id"], verdict=verdict, detail=detail, tables=kept, source_rows=source_rows,
-        rows=sum(len(r) for _, r in kept.values()), checks=checks, seconds=time.monotonic() - start,
-        one_minimal=one_minimal, budget_exhausted=budget_exhausted, gold=gold, agent=agent, schema=schema)
+        def holds():
+            nonlocal checks
+            if checks >= max_checks or time.monotonic() - start > max_seconds:
+                raise _Budget
+            checks += 1
+            return _observe(con, gold_sql, agent_sql, ordered, timeout)[0] in SILENT
+
+        def try_delete(deletions):
+            """Delete {table: rowids} tentatively; keep it only if the failure still holds."""
+            con.execute("SAVEPOINT cand")
+            for table, rowids in deletions.items():
+                con.execute(f"DELETE FROM {_q(table)} WHERE rowid IN (SELECT value FROM json_each(?))",
+                            (json.dumps(rowids),))
+            try:
+                ok = ((not parents & set(deletions) or _dangling(con, fks) <= allowed)
+                      and holds())
+            except BaseException:
+                con.execute("ROLLBACK TO cand")
+                con.execute("RELEASE cand")
+                raise
+            con.execute("RELEASE cand" if ok else "ROLLBACK TO cand")
+            if not ok:
+                con.execute("RELEASE cand")
+            return ok
+
+        source_rows = sum(len(v) for v in keep.values())
+        if not holds():
+            con.close()
+            return None
+
+        budget_exhausted, one_minimal = False, False
+        try:
+            # One guided guess before blind halving: keep rows that match the queries' text
+            # literals plus their foreign-key neighbours. Verified like any other step.
+            for seed in _seed_candidates(con, reads, fks, [gold_sql, agent_sql]):
+                proposal = {t: [r for r in keep[t] if r not in seed[t]] for t in seed if t in keep}
+                proposal = {t: ids for t, ids in proposal.items() if ids}
+                if proposal and try_delete(proposal):
+                    for t in proposal:
+                        keep[t] = [r for r in keep[t] if r in seed[t]]
+                    break
+            while True:
+                changed = False
+                for name in sorted(keep, key=lambda n: -len(keep[n])):
+                    rows = keep[name]
+                    if rows and try_delete({name: rows}):
+                        keep[name], changed = [], True
+                        continue
+                    n = 2
+                    while len(rows) >= 2:
+                        size = -(-len(rows) // n)
+                        for s in range(0, len(rows), size):
+                            if try_delete({name: rows[s:s + size]}):
+                                rows, changed, n = rows[:s] + rows[s + size:], True, max(2, n - 1)
+                                break
+                        else:
+                            if n >= len(rows):
+                                break
+                            n = min(len(rows), n * 2)
+                    keep[name] = rows
+                if not changed:
+                    one_minimal = True
+                    break
+        except _Budget:
+            budget_exhausted = True
+
+        verdict, detail, gold, agent = _observe(con, gold_sql, agent_sql, ordered, timeout)
+        extra = _referenced_rows(con, keep, reads)
+        tables, context_rows = {}, 0
+        for name in sorted(set(keep) | set(extra)):
+            ids = keep.get(name) or sorted(extra.get(name, ()))
+            if ids:
+                cols = [r[1] for r in con.execute(f"PRAGMA table_xinfo({_q(name)})") if r[6] == 0]
+                rows = con.execute(f"SELECT {', '.join(_q(c) for c in cols)} FROM {_q(name)} "
+                                   "WHERE rowid IN (SELECT value FROM json_each(?)) ORDER BY rowid",
+                                   (json.dumps(ids),)).fetchall()
+                tables[name] = (cols, rows)
+                if name not in keep:
+                    context_rows += len(rows)
+        schema = [r[0] for r in con.execute(
+            "SELECT sql FROM sqlite_master WHERE sql IS NOT NULL AND name NOT LIKE 'sqlite_%' "
+            f"AND name NOT LIKE '{TMP_INDEX}%' AND type IN ('table', 'index', 'view') "
+            "ORDER BY CASE type WHEN 'table' THEN 0 WHEN 'index' THEN 1 ELSE 2 END, rowid")]
+        con.close()
+        return Counterexample(
+            question_id=question["id"], verdict=verdict, detail=detail, tables=tables, source_rows=source_rows,
+            rows=sum(len(keep[t]) for t in keep), context_rows=context_rows, checks=checks, seconds=time.monotonic() - start,
+            one_minimal=one_minimal, budget_exhausted=budget_exhausted, gold=gold, agent=agent, schema=schema,
+            ordered=ordered)
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
 
 
 def write(cx: Counterexample, question, agent_sql, out_path: str, timeout=5.0) -> None:
@@ -193,8 +421,9 @@ def write(cx: Counterexample, question, agent_sql, out_path: str, timeout=5.0) -
         con.commit()
     finally:
         con.close()
-    with sqlite3.connect(f"file:{out_path}?mode=ro", uri=True) as ro:
-        lock_readonly(ro)
+    ro = sqlite3.connect(f"file:{out_path}?mode=ro", uri=True)
+    try:
         verdict = _observe(ro, question["gold_sql"], agent_sql, bool(question.get("ordered")), timeout)[0]
-    ro.close()
+    finally:
+        ro.close()
     cx.verified = verdict in SILENT

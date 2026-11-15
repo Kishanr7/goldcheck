@@ -60,7 +60,6 @@ def main(argv=None):
     args = ap.parse_args(argv)
     with tempfile.TemporaryDirectory() as d:
         db, _, _ = demo.build(d)
-        source = shrink.load_source(db)
         con = core.connect_readonly(db)
         rows, total = [], 0
         for qid, question, gold, op, sql in mutants():
@@ -69,7 +68,7 @@ def main(argv=None):
             verdict = core.score(con, [q], {q["id"]: sql})[0].verdict
             if verdict not in core.SILENT:
                 continue
-            cx = shrink.shrink(db, q, sql, max_seconds=args.max_seconds, source=source)
+            cx = shrink.shrink(db, q, sql, max_seconds=args.max_seconds)
             if cx is None:
                 rows.append({"id": q["id"], "verdict": verdict, "shrunk": False})
                 continue

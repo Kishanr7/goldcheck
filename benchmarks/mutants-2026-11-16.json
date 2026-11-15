@@ -1,0 +1,901 @@
+{
+  "summary": {
+    "python": "3.13.15",
+    "platform": "Windows-11-10.0.26200-SP0",
+    "mutants": 63,
+    "silent_mutants": 51,
+    "within_10_rows_and_60s": 51,
+    "share": 1.0,
+    "median_rows": 3,
+    "max_rows": 8,
+    "max_seconds": 0.0136,
+    "all_one_minimal": true,
+    "kill_criterion_passed": true
+  },
+  "results": [
+    {
+      "id": "q02:negate status",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 1,
+      "checks": 16,
+      "seconds": 0.0027,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "orders": 1
+      }
+    },
+    {
+      "id": "q02:wrong status literal",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 1,
+      "checks": 16,
+      "seconds": 0.0027,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "orders": 1
+      }
+    },
+    {
+      "id": "q03:drop status filter",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 2,
+      "checks": 25,
+      "seconds": 0.0051,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "orders": 1,
+        "order_items": 1
+      }
+    },
+    {
+      "id": "q03:negate status",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 2,
+      "checks": 25,
+      "seconds": 0.0053,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "orders": 1,
+        "order_items": 1
+      }
+    },
+    {
+      "id": "q03:wrong status literal",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 2,
+      "checks": 27,
+      "seconds": 0.0055,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "orders": 1,
+        "order_items": 1
+      }
+    },
+    {
+      "id": "q03:sum to avg",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 3,
+      "checks": 30,
+      "seconds": 0.0062,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "orders": 1,
+        "order_items": 2
+      }
+    },
+    {
+      "id": "q03:sum to max",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 3,
+      "checks": 30,
+      "seconds": 0.006,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "orders": 1,
+        "order_items": 2
+      }
+    },
+    {
+      "id": "q03:price without qty",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 2,
+      "checks": 29,
+      "seconds": 0.0062,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "orders": 1,
+        "order_items": 1
+      }
+    },
+    {
+      "id": "q03:join on customer id",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 2,
+      "checks": 27,
+      "seconds": 0.0059,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "orders": 1,
+        "order_items": 1
+      }
+    },
+    {
+      "id": "q04:drop distinct",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 2,
+      "checks": 30,
+      "seconds": 0.0046,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "orders": 2
+      }
+    },
+    {
+      "id": "q05:drop status filter",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "row_count_mismatch",
+      "source_rows": 992,
+      "rows": 3,
+      "checks": 31,
+      "seconds": 0.0063,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "products": 1,
+        "orders": 1,
+        "order_items": 1
+      }
+    },
+    {
+      "id": "q05:negate status",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "row_count_mismatch",
+      "source_rows": 992,
+      "rows": 3,
+      "checks": 31,
+      "seconds": 0.0061,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "products": 1,
+        "orders": 1,
+        "order_items": 1
+      }
+    },
+    {
+      "id": "q05:wrong status literal",
+      "verdict": "empty_result",
+      "shrunk": true,
+      "final_verdict": "empty_result",
+      "source_rows": 992,
+      "rows": 3,
+      "checks": 34,
+      "seconds": 0.0072,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "products": 1,
+        "orders": 1,
+        "order_items": 1
+      }
+    },
+    {
+      "id": "q05:sum to avg",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 5,
+      "checks": 47,
+      "seconds": 0.0089,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "products": 2,
+        "orders": 1,
+        "order_items": 2
+      }
+    },
+    {
+      "id": "q05:sum to max",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 5,
+      "checks": 47,
+      "seconds": 0.0084,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "products": 2,
+        "orders": 1,
+        "order_items": 2
+      }
+    },
+    {
+      "id": "q05:price without qty",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 3,
+      "checks": 38,
+      "seconds": 0.0073,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "products": 1,
+        "orders": 1,
+        "order_items": 1
+      }
+    },
+    {
+      "id": "q05:join on customer id",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "empty_result",
+      "source_rows": 992,
+      "rows": 3,
+      "checks": 34,
+      "seconds": 0.007,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "products": 1,
+        "orders": 1,
+        "order_items": 1
+      }
+    },
+    {
+      "id": "q05:join product on order",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "empty_result",
+      "source_rows": 992,
+      "rows": 3,
+      "checks": 34,
+      "seconds": 0.0064,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "products": 1,
+        "orders": 1,
+        "order_items": 1
+      }
+    },
+    {
+      "id": "q05:group by wrong key",
+      "verdict": "row_count_mismatch",
+      "shrunk": true,
+      "final_verdict": "row_count_mismatch",
+      "source_rows": 992,
+      "rows": 5,
+      "checks": 47,
+      "seconds": 0.0082,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "products": 2,
+        "orders": 1,
+        "order_items": 2
+      }
+    },
+    {
+      "id": "q06:wrong segment",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 1,
+      "checks": 12,
+      "seconds": 0.002,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "customers": 1
+      }
+    },
+    {
+      "id": "q07:sum to avg",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 2,
+      "checks": 14,
+      "seconds": 0.0018,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "refunds": 2
+      }
+    },
+    {
+      "id": "q07:sum to max",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 2,
+      "checks": 14,
+      "seconds": 0.002,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "refunds": 2
+      }
+    },
+    {
+      "id": "q08:drop status filter",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "row_count_mismatch",
+      "source_rows": 992,
+      "rows": 3,
+      "checks": 36,
+      "seconds": 0.0072,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "customers": 1,
+        "orders": 1,
+        "order_items": 1
+      }
+    },
+    {
+      "id": "q08:negate status",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "row_count_mismatch",
+      "source_rows": 992,
+      "rows": 3,
+      "checks": 36,
+      "seconds": 0.0068,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "customers": 1,
+        "orders": 1,
+        "order_items": 1
+      }
+    },
+    {
+      "id": "q08:wrong status literal",
+      "verdict": "empty_result",
+      "shrunk": true,
+      "final_verdict": "empty_result",
+      "source_rows": 992,
+      "rows": 3,
+      "checks": 37,
+      "seconds": 0.0069,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "customers": 1,
+        "orders": 1,
+        "order_items": 1
+      }
+    },
+    {
+      "id": "q08:sum to avg",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 4,
+      "checks": 40,
+      "seconds": 0.0079,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "customers": 1,
+        "orders": 1,
+        "order_items": 2
+      }
+    },
+    {
+      "id": "q08:sum to max",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 4,
+      "checks": 40,
+      "seconds": 0.0076,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "customers": 1,
+        "orders": 1,
+        "order_items": 2
+      }
+    },
+    {
+      "id": "q08:price without qty",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 3,
+      "checks": 40,
+      "seconds": 0.0081,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "customers": 1,
+        "orders": 1,
+        "order_items": 1
+      }
+    },
+    {
+      "id": "q08:join on customer id",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "empty_result",
+      "source_rows": 992,
+      "rows": 3,
+      "checks": 37,
+      "seconds": 0.0076,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "customers": 1,
+        "orders": 1,
+        "order_items": 1
+      }
+    },
+    {
+      "id": "q08:join on order id",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "empty_result",
+      "source_rows": 992,
+      "rows": 3,
+      "checks": 37,
+      "seconds": 0.0068,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "customers": 1,
+        "orders": 1,
+        "order_items": 1
+      }
+    },
+    {
+      "id": "q09:drop status filter",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "row_count_mismatch",
+      "source_rows": 992,
+      "rows": 3,
+      "checks": 31,
+      "seconds": 0.0065,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "products": 1,
+        "orders": 1,
+        "order_items": 1
+      }
+    },
+    {
+      "id": "q09:negate status",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "row_count_mismatch",
+      "source_rows": 992,
+      "rows": 3,
+      "checks": 31,
+      "seconds": 0.0062,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "products": 1,
+        "orders": 1,
+        "order_items": 1
+      }
+    },
+    {
+      "id": "q09:wrong status literal",
+      "verdict": "empty_result",
+      "shrunk": true,
+      "final_verdict": "empty_result",
+      "source_rows": 992,
+      "rows": 3,
+      "checks": 34,
+      "seconds": 0.0067,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "products": 1,
+        "orders": 1,
+        "order_items": 1
+      }
+    },
+    {
+      "id": "q09:sum to avg",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 5,
+      "checks": 47,
+      "seconds": 0.0131,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "products": 1,
+        "orders": 2,
+        "order_items": 2
+      }
+    },
+    {
+      "id": "q09:sum to max",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 5,
+      "checks": 47,
+      "seconds": 0.0096,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "products": 1,
+        "orders": 2,
+        "order_items": 2
+      }
+    },
+    {
+      "id": "q09:reverse sort",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "order_mismatch",
+      "source_rows": 992,
+      "rows": 5,
+      "checks": 47,
+      "seconds": 0.009,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "products": 2,
+        "orders": 1,
+        "order_items": 2
+      }
+    },
+    {
+      "id": "q09:limit off by one",
+      "verdict": "row_count_mismatch",
+      "shrunk": true,
+      "final_verdict": "row_count_mismatch",
+      "source_rows": 992,
+      "rows": 8,
+      "checks": 82,
+      "seconds": 0.0136,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "products": 3,
+        "orders": 2,
+        "order_items": 3
+      }
+    },
+    {
+      "id": "q09:join on customer id",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "empty_result",
+      "source_rows": 992,
+      "rows": 3,
+      "checks": 34,
+      "seconds": 0.0093,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "products": 1,
+        "orders": 1,
+        "order_items": 1
+      }
+    },
+    {
+      "id": "q09:join product on order",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "empty_result",
+      "source_rows": 992,
+      "rows": 3,
+      "checks": 34,
+      "seconds": 0.0065,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "products": 1,
+        "orders": 1,
+        "order_items": 1
+      }
+    },
+    {
+      "id": "q10:strict lower bound",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 1,
+      "checks": 21,
+      "seconds": 0.0034,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "orders": 1
+      }
+    },
+    {
+      "id": "q10:inclusive upper bound",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 1,
+      "checks": 19,
+      "seconds": 0.003,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "orders": 1
+      }
+    },
+    {
+      "id": "q11:drop status filter",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 2,
+      "checks": 25,
+      "seconds": 0.0054,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "orders": 1,
+        "order_items": 1
+      }
+    },
+    {
+      "id": "q11:negate status",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 2,
+      "checks": 25,
+      "seconds": 0.0054,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "orders": 1,
+        "order_items": 1
+      }
+    },
+    {
+      "id": "q11:wrong status literal",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 2,
+      "checks": 27,
+      "seconds": 0.0056,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "orders": 1,
+        "order_items": 1
+      }
+    },
+    {
+      "id": "q11:sum to avg",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 3,
+      "checks": 30,
+      "seconds": 0.0062,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "orders": 1,
+        "order_items": 2
+      }
+    },
+    {
+      "id": "q11:sum to max",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 3,
+      "checks": 30,
+      "seconds": 0.0062,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "orders": 1,
+        "order_items": 2
+      }
+    },
+    {
+      "id": "q11:avg to sum",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 4,
+      "checks": 46,
+      "seconds": 0.0122,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "orders": 2,
+        "order_items": 2
+      }
+    },
+    {
+      "id": "q11:price without qty",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 2,
+      "checks": 29,
+      "seconds": 0.0062,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "orders": 1,
+        "order_items": 1
+      }
+    },
+    {
+      "id": "q11:join on customer id",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 2,
+      "checks": 27,
+      "seconds": 0.006,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "orders": 1,
+        "order_items": 1
+      }
+    },
+    {
+      "id": "q11:group by order",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 4,
+      "checks": 63,
+      "seconds": 0.0119,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "orders": 2,
+        "order_items": 2
+      }
+    },
+    {
+      "id": "q12:not in to in",
+      "verdict": "value_mismatch",
+      "shrunk": true,
+      "final_verdict": "value_mismatch",
+      "source_rows": 992,
+      "rows": 1,
+      "checks": 11,
+      "seconds": 0.0018,
+      "one_minimal": true,
+      "budget_exhausted": false,
+      "verified": true,
+      "tables": {
+        "products": 1
+      }
+    }
+  ]
+}

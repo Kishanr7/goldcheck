@@ -40,6 +40,11 @@ def connect_readonly(path: str) -> sqlite3.Connection:
         con.execute("SELECT name FROM sqlite_master LIMIT 1").fetchall()
     except sqlite3.Error as exc:
         raise InputError(f"Cannot open database read-only: {path} ({exc})") from exc
+    return lock_readonly(con)
+
+
+def lock_readonly(con: sqlite3.Connection) -> sqlite3.Connection:
+    """From now on this connection may only run SELECT-style statements."""
 
     def authorizer(action, *_):
         return sqlite3.SQLITE_OK if action in ALLOWED_ACTIONS else sqlite3.SQLITE_DENY
@@ -146,6 +151,7 @@ class Result:
     gold_rows: list = field(default_factory=list)
     agent_cols: list = field(default_factory=list)
     agent_rows: list = field(default_factory=list)
+    counterexample: object = None  # shrink.Counterexample when --shrink found one
 
 
 def load_questions(path: str):

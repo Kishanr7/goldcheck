@@ -39,7 +39,8 @@ summary:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 .body{padding:0 14px 14px}.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
 pre{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:10px;overflow-x:auto;font:.82rem/1.45 ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-word;margin:6px 0}
 h3{font:600 .8rem/1 system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);margin:12px 0 4px}
-.note{color:var(--mute);font-size:.9rem}footer{margin-top:40px;color:var(--mute);font-size:.88rem;border-top:1px solid var(--line);padding-top:14px}
+.note{color:var(--mute);font-size:.9rem}
+.cx{margin-top:16px;border-top:2px solid var(--accent);padding-top:6px}.cx details{margin:12px 0 0}footer{margin-top:40px;color:var(--mute);font-size:.88rem;border-top:1px solid var(--line);padding-top:14px}
 """
 
 
@@ -50,6 +51,22 @@ def _table(cols, rows, limit=6):
     body = "".join("<tr>" + "".join(f"<td>{escape(str(v))}</td>" for v in r) + "</tr>" for r in rows[:limit])
     more = f"<p class='note'>Showing {limit} of {len(rows)} rows.</p>" if len(rows) > limit else ""
     return f"<div class='wrap'><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>{more}"
+
+
+def _counterexample(cx):
+    if cx is None:
+        return ""
+    status = ("no single row can be removed" if cx.one_minimal
+              else "search stopped at its budget; it may shrink further")
+    tables = "".join(f"<h3>{escape(name)} ({len(rows)} row{'s' * (len(rows) != 1)})</h3>{_table(cols, rows)}"
+                     for name, (cols, rows) in cx.tables.items())
+    return ("<div class='cx'><h3>Smallest database that shows the difference</h3>"
+            f"<p class='note'>{cx.rows} row{'s' * (cx.rows != 1)} instead of {cx.source_rows}; "
+            f"found in {cx.checks} checks, {cx.seconds:.2f} s; {status}.</p>{tables}"
+            "<div class='cols'><div><h3>Expected on these rows</h3>"
+            f"{_table(*cx.gold)}</div><div><h3>Agent on these rows</h3>{_table(*cx.agent)}</div></div>"
+            "<details><summary>SQL to recreate it in any SQLite shell</summary>"
+            f"<div class='body'><pre>{escape(cx.to_sql())}</pre></div></details></div>")
 
 
 def _kind(verdict):
@@ -96,7 +113,7 @@ def render(results, summary, title="Agent evaluation", problems=()):
             + "<div class='cols'><div><h3>Expected</h3>"
             f"<pre>{escape(r.gold_sql)}</pre>{_table(r.gold_cols, r.gold_rows)}</div>"
             f"<div><h3>Agent</h3><pre>{escape(r.agent_sql) or '(no SQL)'}</pre>{_table(r.agent_cols, r.agent_rows)}</div>"
-            "</div></div></details>")
+            "</div>" + _counterexample(r.counterexample) + "</div></details>")
     parts.append("<footer>Scoring is deterministic: both queries run read-only against the same database and "
                  "their results are compared, ignoring column names, column order and tiny numeric differences. "
                  "No model is involved in scoring and nothing left this computer. "

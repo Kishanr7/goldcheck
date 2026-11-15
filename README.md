@@ -41,6 +41,18 @@ Open the report: the four silent failures are expanded, each showing the expecte
    ```
 3. Use `--min-accuracy 0.8` to fail a CI job below a threshold, `--json` for machine output.
 
+## See the smallest database that shows each wrong answer
+
+Add `--shrink` to `run` (the demo does it automatically). For every silently wrong answer, goldcheck deletes rows from a private in-memory copy of your database until no single row can go, keeping only copies where the two queries still disagree. The report then shows something like "3 rows instead of 992": one customer, one order and one item on which the agent's extra join returns nothing. It also gives a SQL script that recreates those rows in any SQLite shell.
+
+To write one counterexample to a file:
+
+```
+python -m goldcheck shrink --db shop.sqlite --questions questions.json --answers answers.jsonl --id q08 --out q08-counterexample.sqlite
+```
+
+Your database is never modified. Agent SQL is just as restricted on the copies. Declared foreign keys are kept intact; undeclared relationships are not, so a counterexample can contain an order whose customer was deleted. The search stops after 60 s per question (`--shrink-seconds`) and says so if it did.
+
 ## What "correct" means
 
 Both queries run read-only on the same SQLite file. Results match when they contain the same rows, ignoring column names, column order, extra agent columns, and numeric differences beyond six significant digits. See `product/RELIABILITY_CONTRACT.md` for the exact rules and known blind spots.
@@ -50,7 +62,8 @@ Both queries run read-only on the same SQLite file. Results match when they cont
 - SQLite databases only in this version. Export a sample of your warehouse to SQLite to use it.
 - A pass means "matches the gold answer", so wrong gold SQL gives wrong scores.
 - Small question sets give wide intervals; the report shows the interval so the number is not over-read.
-- Windows and macOS are untested.
+- Tested on Linux and Windows 11; macOS is untested.
+- Shrinking removes rows, not values, and has only been measured on fictional data (`research/SHRINK_SPIKE_2026-11-16.md`).
 
 ## Privacy and safety
 

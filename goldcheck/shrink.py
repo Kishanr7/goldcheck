@@ -52,9 +52,13 @@ class Counterexample:
     blame: object = None             # blame.explain() result: the clause that makes the difference
     context_rows: int = 0            # rows of unread tables included so references are not left dangling
     schema: list = field(default_factory=list)
+    engine: str = "sqlite"
 
     def to_sql(self) -> str:
-        """A script that recreates the counterexample in any SQLite shell."""
+        """A script that recreates the counterexample in a SQLite (or DuckDB) shell."""
+        if self.engine == "duckdb":
+            from . import duck
+            return duck.to_sql(self)
         lines = [s.rstrip().rstrip(";") + ";" for s in self.schema]
         for name, (cols, rows) in self.tables.items():
             col_list = ", ".join(_q(c) for c in cols)
@@ -176,6 +180,33 @@ def _dangling(con, fks):
                f"AND NOT EXISTS (SELECT 1 FROM {_q(parent)} p WHERE {on})")
         bad.update((i, r[0]) for r in con.execute(sql))
     return bad
+
+
+def _cascade(con, fks, deletions):
+    """Grow {table: rowids} with every row (in the reduced tables) that points at a deleted row.
+
+    Deleting a question post then also deletes its answers, instead of rejecting the step
+    because the answers would dangle. Uses the helper indexes, so the cost follows the
+    deletion size.
+    """
+    out = {t: list(dict.fromkeys(ids)) for t, ids in deletions.items()}
+    seen = {t: set(ids) for t, ids in out.items()}
+    frontier = {t: list(ids) for t, ids in out.items()}
+    while frontier:
+        nxt = {}
+        for child, frm, parent, to in fks:
+            if not frontier.get(parent):
+                continue
+            on = " AND ".join(f"c.{_q(f)} = p.{_q(t)}" for f, t in zip(frm, to))
+            for (rid,) in con.execute(
+                    f"SELECT c.rowid FROM json_each(?) j CROSS JOIN {_q(parent)} p ON p.rowid = j.value "
+                    f"CROSS JOIN {_q(child)} c ON {on}", (json.dumps(frontier[parent]),)):
+                if rid not in seen.setdefault(child, set()):
+                    seen[child].add(rid)
+                    out.setdefault(child, []).append(rid)
+                    nxt.setdefault(child, []).append(rid)
+        frontier = nxt
+    return out
 
 
 def _deleted_keys(con, fks, deletions):
@@ -328,6 +359,9 @@ def _observe(con, gold_sql, agent_sql, ordered, timeout):
 
 def shrink(db_path, question, agent_sql, timeout=5.0, max_checks=3000, max_seconds=60.0, workdir=None):
     """Return a Counterexample, or None if the queries do not disagree silently on the database."""
+    from . import duck
+    if duck.is_duck(db_path):
+        return duck.shrink(db_path, question, agent_sql, timeout, max_checks, max_seconds)
     gold_sql, ordered = question["gold_sql"], bool(question.get("ordered"))
     start, checks = time.monotonic(), 0
     try:
@@ -373,7 +407,11 @@ def shrink(db_path, question, agent_sql, timeout=5.0, max_checks=3000, max_secon
             return not informative or _has_content(gold)
 
         def try_delete(deletions):
-            """Delete {table: rowids} tentatively; keep it only if the failure still holds."""
+            """Delete {table: rowids}, plus rows that would be left pointing at them.
+
+            Returns the full deletion when the failure still holds, else None (rolled back).
+            """
+            deletions = _cascade(con, fks, deletions)
             keys = _deleted_keys(con, fks, deletions)
             con.execute("SAVEPOINT cand")
             for table, rowids in deletions.items():
@@ -388,7 +426,11 @@ def shrink(db_path, question, agent_sql, timeout=5.0, max_checks=3000, max_secon
             con.execute("RELEASE cand" if ok else "ROLLBACK TO cand")
             if not ok:
                 con.execute("RELEASE cand")
-            return ok
+                return None
+            for table, rowids in deletions.items():
+                gone = set(rowids)
+                keep[table] = [r for r in keep[table] if r not in gone]
+            return deletions
 
         source_rows = sum(len(v) for v in keep.values())
         if not holds():
@@ -404,38 +446,35 @@ def shrink(db_path, question, agent_sql, timeout=5.0, max_checks=3000, max_secon
                 proposal = {t: [r for r in keep[t] if r not in seed[t]] for t in seed if t in keep}
                 proposal = {t: ids for t, ids in proposal.items() if ids}
                 if proposal and try_delete(proposal):
-                    for t in proposal:
-                        keep[t] = [r for r in keep[t] if r in seed[t]]
                     break
             # Then, for each large table, guess that a small random sample still shows the
             # difference (true when it is spread over many rows, as with a wrong COUNT).
             rng = random.Random(0)
             for name in sorted(keep, key=lambda n: -len(keep[n])):
                 for size in SAMPLE_SIZES:
-                    if len(keep[name]) <= size * 2:
-                        continue
-                    sample = set(rng.sample(keep[name], size))
-                    if try_delete({name: [r for r in keep[name] if r not in sample]}):
-                        keep[name] = [r for r in keep[name] if r in sample]
+                    if len(keep[name]) > size * 2:
+                        sample = set(rng.sample(keep[name], size))
+                        try_delete({name: [r for r in keep[name] if r not in sample]})
+            # Delta debugging. A row is removed together with the rows that point at it, so
+            # "minimal" means no single row (with its dependants) can be removed.
             while True:
                 changed = False
                 for name in sorted(keep, key=lambda n: -len(keep[n])):
-                    rows = keep[name]
-                    if rows and try_delete({name: rows}):
-                        keep[name], changed = [], True
+                    if keep[name] and try_delete({name: list(keep[name])}):
+                        changed = True
                         continue
                     n = 2
-                    while len(rows) >= 2:
+                    while len(keep[name]) >= 2:
+                        rows = keep[name]
                         size = -(-len(rows) // n)
                         for s in range(0, len(rows), size):
                             if try_delete({name: rows[s:s + size]}):
-                                rows, changed, n = rows[:s] + rows[s + size:], True, max(2, n - 1)
+                                changed, n = True, max(2, n - 1)
                                 break
                         else:
                             if n >= len(rows):
                                 break
                             n = min(len(rows), n * 2)
-                    keep[name] = rows
                 if not changed:
                     one_minimal = True
                     break
@@ -470,10 +509,20 @@ def shrink(db_path, question, agent_sql, timeout=5.0, max_checks=3000, max_secon
 
 
 def write(cx: Counterexample, question, agent_sql, out_path: str, timeout=5.0) -> None:
-    """Write the counterexample to a new SQLite file and re-check it there."""
+    """Write the counterexample to a new database file (SQLite, or DuckDB) and re-check it there."""
     if os.path.exists(out_path):
         raise InputError(f"Refusing to overwrite {out_path}; choose a new path.")
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+    if cx.engine == "duckdb":
+        from . import duck
+        duck._duckdb().connect(out_path).execute(cx.to_sql()).close()
+        con = duck.connect_readonly(out_path)
+        try:
+            verdict = duck.observe(con, question["gold_sql"], agent_sql, bool(question.get("ordered")), timeout)[0]
+        finally:
+            con.close()
+        cx.verified = verdict in SILENT
+        return
     con = sqlite3.connect(out_path)
     try:
         con.executescript(cx.to_sql())

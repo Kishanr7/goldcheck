@@ -35,7 +35,11 @@ class InputError(Exception):
     """A problem with the files the user gave us; message is safe to show."""
 
 
-def connect_readonly(path: str) -> sqlite3.Connection:
+def connect_readonly(path: str):
+    """A connection on which question SQL can only read. SQLite file, or DuckDB/Parquet/CSV/JSON."""
+    from . import duck
+    if duck.is_duck(path):
+        return duck.connect_readonly(path)
     try:
         con = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
         con.execute("SELECT name FROM sqlite_master LIMIT 1").fetchall()
@@ -56,6 +60,9 @@ def lock_readonly(con: sqlite3.Connection) -> sqlite3.Connection:
 
 def run_sql(con, sql, timeout: float = 5.0):
     """Return (columns, rows, error). Exactly one of rows/error is set."""
+    if not isinstance(con, sqlite3.Connection):
+        from . import duck
+        return duck.run_sql(con, sql, timeout)
     if sql is None or not str(sql).strip():
         return None, None, "no_answer"
     start = time.monotonic()

@@ -2,16 +2,16 @@
 
 **A debugger for SQL that returns the wrong result: find it, see the smallest real data that proves it, pin the clause, and lock it in a test.**
 
-> Status: `PORTFOLIO-ONLY` · `UNVALIDATED`. An engineering portfolio project. No claim is made that anyone needs it, uses it, or prefers it to alternatives. Tested by its author's AI agent on Windows 11 and Linux, on fictional data and on the public BIRD benchmark.
+> Status: `PORTFOLIO-ONLY` · `UNVALIDATED`. An engineering portfolio project. No claim is made that anyone needs it, uses it, or prefers it to alternatives. Tested by its author's AI agent on Windows 11 and Linux, on fictional data and on the public BIRD benchmark (see `research/FINAL_REPORT_2026-11-16.md`).
 
-SQL that runs cleanly can still answer the wrong question: a chatbot that forgets a status filter, a refactor that drops a `DISTINCT`, a migration that joins on the wrong key. Nothing crashes, so nobody notices. goldcheck runs the query you trust next to the one you are checking, on your own database, and when they disagree it tells you:
+SQL that runs cleanly can still answer the wrong question: a chatbot that forgets a status filter, a refactor that drops a `DISTINCT`, a migration that joins on the wrong key. Nothing crashes, so nobody notices. goldcheck runs the query you trust next to the one you are checking, on your own data (SQLite, DuckDB, Parquet, CSV or JSON), and when they disagree it tells you:
 
 1. **that** they disagree, and how (wrong values, missing rows, wrong order);
 2. **on which rows**: the database is cut down to the smallest set of *real* rows that still shows the difference, often 1–3;
 3. **in which clause**: one clause at a time is swapped for the trusted version and re-run, so "the WHERE clause" means it was proven by execution;
 4. **how to keep it fixed**: each case is exported as a standalone regression test.
 
-Python standard library only. No model, no API key, no network, nothing to install.
+Python standard library only for SQLite. DuckDB, Parquet, CSV and JSON need `pip install duckdb`. No model, no API key, no network.
 
 ## Commands
 
@@ -77,6 +77,17 @@ python -m unittest discover -s regressions
 
 Each case fails while the bug is there. Put the fixed SQL in `query.sql` and it passes. The fixtures contain real rows from your database, so review them before sharing.
 
+## DuckDB, Parquet, CSV and JSON
+
+Point `--db` at a `.duckdb` file, a `.parquet`, `.csv` or `.json` file, or a folder of them (each file becomes a table named after it). Everything works the same: `run`, `compare`, shrinking, clause blame, `--export-tests` and MCP.
+
+```
+pip install duckdb
+python -m goldcheck compare --db exports/ --old old.sql --new new.sql
+```
+
+Question SQL runs on goldcheck's own in-memory copy, after DuckDB's `enable_external_access = false` and `lock_configuration = true`. That blocks file reads and writes, `COPY`, `ATTACH` and extension installs, and the setting cannot be switched back. Only one `SELECT` is accepted per query, and each has a timeout. Data loaded from files is held in memory, so very large folders need a sample. Queries must be valid DuckDB SQL: SQLite-only SQL, such as selecting an ungrouped column, is rejected as an error.
+
 ## Let a coding agent use it (MCP)
 
 `python -m goldcheck mcp` serves one tool, `compare_queries(db_path, trusted_sql, sql, ordered?, shrink?, max_seconds?)`, over MCP stdio. It returns whether the results match. When they don't, it also returns the counterexample rows, both results on them, the clause that causes the difference and a script that recreates the rows. The agent can repair its query and call again. For Claude Code:
@@ -103,7 +114,7 @@ First it tries one guess: rows equal to a text literal in either query (e.g. the
 | --- | --- |
 | Demo, 4 silent failures | 1–3 rows each, each blamed on one clause and confirmed on the full database |
 | 51 mechanical mutants of the demo's gold queries | 51/51 shrank to ≤8 rows (median 3) in ≤0.02 s |
-| BIRD dev, real ChatGPT errors (held-out sample) | see `research/FINAL_REPORT_2026-11-16.md` |
+| BIRD dev, 200 real ChatGPT errors (two random samples, one never seen during development) | 199/200 shrank to ≤10 real rows, all proven minimal, median 2 rows in 0.25 s, from tables of up to 1,067,081 rows; cause pinned to 1–2 clauses in 66% |
 
 Reproduce: `python benchmarks/mutants.py`; for BIRD see `benchmarks/README.md`.
 
@@ -118,7 +129,7 @@ Results match when they contain the same rows, ignoring column names, column ord
 
 ## Limits
 
-- SQLite only. To use it with a warehouse, export a sample to SQLite.
+- SQLite and DuckDB (including Parquet, CSV, JSON). For a warehouse, export a sample. Foreign keys are only respected in SQLite.
 - A pass means "matches the trusted query on this database", not "correct everywhere".
 - Clause blame swaps one clause at a time. Queries that differ in several clauses at once, or that use top-level `WITH` or `UNION`, get a counterexample but no single clause.
 - Tables `WITHOUT ROWID` cannot be shrunk.

@@ -73,10 +73,18 @@ def explain(db_path, expected_sql, actual_sql, cx, ordered=False, timeout=5.0):
     old, new = split(expected_sql), split(actual_sql)
     if not old or not new:
         return None
-    fixture = sqlite3.connect(":memory:")
+    duckdb_engine = getattr(cx, "engine", "sqlite") == "duckdb"
     try:
-        fixture.executescript(cx.to_sql())
-        lock_readonly(fixture)
+        if duckdb_engine:
+            from . import duck
+            fixture = duck.fixture(cx)
+        else:
+            fixture = sqlite3.connect(":memory:")
+            fixture.executescript(cx.to_sql())
+            lock_readonly(fixture)
+    except Exception:
+        return None
+    try:
         differing = [c for c in TRY_ORDER if old.get(c) != new.get(c)]
         # One clause first; then two together, because a wrong filter often comes with a wrong join.
         groups = [(c,) for c in differing] + [(a, b) for i, a in enumerate(differing) for b in differing[i + 1:]]
@@ -86,12 +94,13 @@ def explain(db_path, expected_sql, actual_sql, cx, ordered=False, timeout=5.0):
                 clause = " + ".join(group)
                 full = None
                 try:
-                    con = lock_readonly(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True))
+                    con = (duck.connect_readonly(db_path) if duckdb_engine
+                           else lock_readonly(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)))
                     try:
                         full = _matches(con, expected_sql, patched, ordered, timeout)
                     finally:
                         con.close()
-                except sqlite3.Error:
+                except Exception:
                     pass
                 def show(parts):
                     lines = [f"{c} {parts[c]}" if len(group) > 1 else parts[c]

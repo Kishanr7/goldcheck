@@ -67,15 +67,31 @@ def _same(exp_rows, got_rows, ordered):
     return e == g if ordered else Counter(e) == Counter(g)
 
 
+def _plain(v):
+    import datetime
+    import decimal
+    if isinstance(v, decimal.Decimal):
+        return float(v)
+    if isinstance(v, (datetime.date, datetime.time, datetime.datetime, datetime.timedelta)):
+        return str(v)
+    return v
+
+
 def _case(name):
     def test(self):
         folder = os.path.join(HERE, name)
         read = lambda f: open(os.path.join(folder, f), encoding="utf-8").read()
         expected = json.loads(read("expected.json"))
-        con = sqlite3.connect(":memory:")
+        if expected.get("engine") == "duckdb":
+            import duckdb  # pip install duckdb
+            con = duckdb.connect(":memory:")
+            run_script = con.execute
+        else:
+            con = sqlite3.connect(":memory:")
+            run_script = con.executescript
         try:
-            con.executescript(read("fixture.sql"))
-            got = [list(r) for r in con.execute(read("query.sql")).fetchall()]
+            run_script(read("fixture.sql"))
+            got = [[_plain(v) for v in r] for r in con.execute(read("query.sql")).fetchall()]
         finally:
             con.close()
         self.assertTrue(_same(expected["rows"], got, expected["ordered"]),
@@ -98,11 +114,19 @@ if __name__ == "__main__":
 
 def _still_differs(r) -> bool:
     """Rebuild the fixture from its SQL script and confirm the two queries still disagree there."""
+    cx = r.counterexample
+    if getattr(cx, "engine", "sqlite") == "duckdb":
+        from . import duck
+        con = duck.fixture(cx)
+        try:
+            return duck.observe(con, r.gold_sql, r.agent_sql, cx.ordered, 5.0)[0] in SILENT
+        finally:
+            con.close()
     from .shrink import _observe
     con = sqlite3.connect(":memory:")
     try:
-        con.executescript(r.counterexample.to_sql())
-        return _observe(con, r.gold_sql, r.agent_sql, r.counterexample.ordered, 5.0)[0] in SILENT
+        con.executescript(cx.to_sql())
+        return _observe(con, r.gold_sql, r.agent_sql, cx.ordered, 5.0)[0] in SILENT
     except sqlite3.Error:
         return False
     finally:
@@ -110,7 +134,15 @@ def _still_differs(r) -> bool:
 
 
 def _jsonable(v):
-    return {"hex": v.hex()} if isinstance(v, bytes) else v
+    import datetime
+    import decimal
+    if isinstance(v, bytes):
+        return {"hex": v.hex()}
+    if isinstance(v, decimal.Decimal):
+        return float(v)
+    if isinstance(v, (datetime.date, datetime.time, datetime.datetime, datetime.timedelta)):
+        return str(v)
+    return v
 
 
 def _folder_name(qid: str, taken: set) -> str:
@@ -138,6 +170,7 @@ def export(results, out_dir: str) -> int:
             "query.sql": r.agent_sql.strip() + "\n",
             "reference.sql": r.gold_sql.strip() + "\n",
             "expected.json": json.dumps({"id": r.id, "note": r.question, "ordered": bool(cx.ordered),
+                                         "engine": getattr(cx, "engine", "sqlite"),
                                          "columns": list(cx.gold[0]),
                                          "rows": [[_jsonable(v) for v in row] for row in cx.gold[1]]},
                                         indent=1, ensure_ascii=False) + "\n",

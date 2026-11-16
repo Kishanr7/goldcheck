@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "goldcheck"
+dynamic = ["version"]
+description = "A debugger for SQL that returns the wrong result: find it, shrink it to the smallest real rows, pin the clause, lock it in a test."
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+dependencies = []
+
+[project.optional-dependencies]
+duckdb = ["duckdb>=1.4"]
+postgres = ["psycopg[binary]>=3.2"]
+all = ["duckdb>=1.4", "psycopg[binary]>=3.2"]
+
+[project.scripts]
+goldcheck = "goldcheck.__main__:entry"
+
+[tool.setuptools]
+packages = ["goldcheck"]
+
+[tool.setuptools.dynamic]
+version = {attr = "goldcheck.__version__"}

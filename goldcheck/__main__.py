@@ -186,7 +186,12 @@ def main(argv=None):
             _shrink_all(db, questions, results, 60.0)
             _finish(results, problems, os.path.join(args.out, "report.html"),
                     "Demo: a careless agent on a fictional shop", 0.0, False)
-            print("Open the report in a browser. Then try `python -m goldcheck run --help` with your own agent.")
+            out = os.path.abspath(args.out)
+            q = lambda p: f'"{p}"' if " " in p else p
+            print("Open the report in a browser.")
+            print("Next, compare two versions of a query (the demo wrote both files):")
+            print(f"  goldcheck compare --db {q(os.path.join(out, 'demo.sqlite'))} "
+                  f"--old {q(os.path.join(out, 'old_query.sql'))} --new {q(os.path.join(out, 'new_query.sql'))}")
             return 0
         if args.cmd == "compare":
             questions, answers = load_pairs(args.pairs, args.old, args.new, args.ordered)
@@ -225,5 +230,10 @@ def main(argv=None):
             con.close()  # Windows cannot delete an open database file
 
 
-if __name__ == "__main__":
+def entry():
+    """Console-script entry point: `goldcheck ...` after `pip install`."""
     sys.exit(main())
+
+
+if __name__ == "__main__":
+    entry()

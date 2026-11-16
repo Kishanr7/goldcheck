@@ -71,6 +71,24 @@ FLAWED = {
 }
 
 
+# A ready-made pair for `goldcheck compare`: a "refactor" that reorders the joins (harmless)
+# and also counts pending orders (the bug).
+COMPARE_OLD = """SELECT c.city, SUM(oi.qty * oi.unit_price) AS revenue
+FROM order_items oi
+JOIN orders o ON o.id = oi.order_id
+JOIN customers c ON c.id = o.customer_id
+WHERE o.status = 'completed'
+GROUP BY c.city
+ORDER BY c.city"""
+COMPARE_NEW = """SELECT c.city, SUM(oi.qty * oi.unit_price) AS revenue
+FROM customers c
+JOIN orders o ON o.customer_id = c.id
+JOIN order_items oi ON oi.order_id = o.id
+WHERE o.status <> 'cancelled'
+GROUP BY c.city
+ORDER BY c.city"""
+
+
 def build(out_dir: str):
     """Write demo.sqlite, questions.json and flawed_agent.jsonl into out_dir. Fully deterministic."""
     os.makedirs(out_dir, exist_ok=True)
@@ -101,6 +119,9 @@ def build(out_dir: str):
     qpath = os.path.join(out_dir, "questions.json")
     with open(qpath, "w", encoding="utf-8") as fh:
         json.dump(questions, fh, indent=2)
+    for name, sql in (("old_query.sql", COMPARE_OLD), ("new_query.sql", COMPARE_NEW)):
+        with open(os.path.join(out_dir, name), "w", encoding="utf-8") as fh:
+            fh.write(sql + "\n")
     apath = os.path.join(out_dir, "flawed_agent.jsonl")
     with open(apath, "w", encoding="utf-8") as fh:
         for qid, sql in FLAWED.items():

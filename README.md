@@ -23,15 +23,24 @@ Python standard library only for SQLite. DuckDB, Parquet, CSV and JSON need `pip
 | `--export-tests` | You want each difference as a test that fails until it is fixed | either of the above |
 | `mcp` | A coding agent should check its own SQL and get the counterexample back | an MCP client |
 
+## Install
+
+Needs Python 3.10+. From a copy of this repository (or `git+https://github.com/Kishanr7/goldcheck` once you have access):
+
+```
+pip install path/to/goldcheck
+pip install "path/to/goldcheck[all]"      # optional: DuckDB, Parquet/CSV/JSON and Postgres
+```
+
+That puts a `goldcheck` command on your PATH, usable from any folder. (`python -m goldcheck` does the same.) Run it from a folder you can write to, such as your Documents, not `C:\Windows\System32`: reports are written to the current folder unless you pass `--out`.
+
 ## Try it in one minute
 
-Needs Python 3.10+.
-
 ```
-python -m goldcheck demo
+goldcheck demo --out gc-demo
 ```
 
-It builds a fictional shop database, scores a deliberately careless agent and writes `goldcheck-demo/report.html`:
+It builds a fictional shop database, scores a deliberately careless agent and writes `gc-demo/report.html`:
 
 ```
 Shrunk 4 silent difference(s) to 1-4 row(s) each; see the report.
@@ -40,6 +49,14 @@ Shrunk 4 silent difference(s) to 1-4 row(s) each; see the report.
 ```
 
 In the report each silent failure shows the expected and actual results, then **the smallest database that shows the difference** (e.g. 3 rows instead of 968: one customer, one order, one item, on which the agent's extra join to `refunds` returns nothing) and **where the difference comes from** (the FROM clause: the agent joins `refunds`).
+
+The demo also writes a query and a "refactored" version of it, and prints the command to compare them:
+
+```
+goldcheck compare --db gc-demo/demo.sqlite --old gc-demo/old_query.sql --new gc-demo/new_query.sql
+```
+
+The refactor reorders the joins (harmless) but also changes `status = 'completed'` to `status <> 'cancelled'`, so pending orders sneak into revenue. goldcheck reports the difference, a 6-row counterexample and the guilty WHERE clause, and exits with code 1.
 
 ## Compare an old and a new query
 

@@ -311,6 +311,9 @@ class Cli(unittest.TestCase):
                     "--answers", os.path.join(d, "flawed_agent.jsonl"), "--out", os.path.join(d, "r.html")]
             self.assertEqual(main(args), 0)
             self.assertEqual(main(args + ["--min-accuracy", "0.9"]), 1)
+            pair = ["compare", "--db", os.path.join(d, "demo.sqlite"), "--old", os.path.join(d, "old_query.sql"),
+                    "--new", os.path.join(d, "new_query.sql"), "--out", os.path.join(d, "pair.html")]
+            self.assertEqual(main(pair), 1)  # the demo's ready-made refactor counts pending orders
             self.assertEqual(main(args + ["--shrink"]), 0)
             with open(os.path.join(d, "r.html"), encoding="utf-8") as fh:
                 self.assertEqual(fh.read().count("Smallest database that shows the difference"), 4)

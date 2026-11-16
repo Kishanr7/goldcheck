@@ -50,6 +50,16 @@ def connect_readonly(path: str):
     return lock_readonly(con)
 
 
+def unlock(con: sqlite3.Connection) -> sqlite3.Connection:
+    """Undo lock_readonly on goldcheck's own working copy.
+
+    An explicit allow-all callback rather than set_authorizer(None): clearing with None only
+    works from Python 3.11, and on 3.10 it leaves every statement denied.
+    """
+    con.set_authorizer(lambda *_: sqlite3.SQLITE_OK)
+    return con
+
+
 def lock_readonly(con: sqlite3.Connection) -> sqlite3.Connection:
     """From now on this connection may only run SELECT-style statements."""
 

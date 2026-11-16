@@ -25,7 +25,7 @@ import tempfile
 import time
 from dataclasses import dataclass, field
 
-from .core import SILENT, InputError, compare, lock_readonly, run_sql
+from .core import SILENT, InputError, compare, lock_readonly, run_sql, unlock
 
 
 SEED_LIMIT = 20_000      # largest per-table guess worth trying
@@ -353,7 +353,7 @@ def _observe(con, gold_sql, agent_sql, ordered, timeout):
         gc, gr, gerr = run_sql(con, gold_sql, timeout)
         ac, ar, aerr = run_sql(con, agent_sql, timeout)
     finally:
-        con.set_authorizer(None)
+        unlock(con)
     if gerr or aerr:
         return None, gerr or aerr, None, None
     verdict, detail = compare(gc, gr, ac, ar, ordered)

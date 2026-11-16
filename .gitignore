@@ -16,3 +16,5 @@ goldcheck-report.html
 build/
 gc-demo/
 *-demo/
+goldcheck-compare.html
+goldcheck-report.html

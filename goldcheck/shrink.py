@@ -59,6 +59,9 @@ class Counterexample:
         if self.engine == "duckdb":
             from . import duck
             return duck.to_sql(self)
+        if self.engine == "postgres":
+            from . import pg
+            return pg.to_sql(self)
         lines = [s.rstrip().rstrip(";") + ";" for s in self.schema]
         for name, (cols, rows) in self.tables.items():
             col_list = ", ".join(_q(c) for c in cols)
@@ -359,7 +362,9 @@ def _observe(con, gold_sql, agent_sql, ordered, timeout):
 
 def shrink(db_path, question, agent_sql, timeout=5.0, max_checks=3000, max_seconds=60.0, workdir=None):
     """Return a Counterexample, or None if the queries do not disagree silently on the database."""
-    from . import duck
+    from . import duck, pg
+    if pg.is_pg(db_path):
+        return pg.shrink(db_path, question, agent_sql, timeout, max_checks, max_seconds)
     if duck.is_duck(db_path):
         return duck.shrink(db_path, question, agent_sql, timeout, max_checks, max_seconds)
     gold_sql, ordered = question["gold_sql"], bool(question.get("ordered"))
@@ -513,6 +518,19 @@ def write(cx: Counterexample, question, agent_sql, out_path: str, timeout=5.0) -
     if os.path.exists(out_path):
         raise InputError(f"Refusing to overwrite {out_path}; choose a new path.")
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+    if cx.engine == "postgres":
+        from . import pg
+        if not out_path.lower().endswith(".sql"):
+            raise InputError("For Postgres the counterexample is written as a SQL script: use an --out ending in .sql")
+        with open(out_path, "w", encoding="utf-8") as fh:
+            fh.write(cx.to_sql())
+        con = pg.fixture(cx)
+        try:
+            verdict = pg.observe(con, question["gold_sql"], agent_sql, bool(question.get("ordered")), timeout)[0]
+        finally:
+            con.close()
+        cx.verified = verdict in SILENT
+        return
     if cx.engine == "duckdb":
         from . import duck
         duck._duckdb().connect(out_path).execute(cx.to_sql()).close()

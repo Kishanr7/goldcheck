@@ -25,6 +25,7 @@ fixture.sql. Edit query.sql when you fix the query (or point it at your new SQL)
 import json
 import math
 import os
+import re
 import sqlite3
 import unittest
 from collections import Counter
@@ -82,6 +83,22 @@ def _case(name):
         folder = os.path.join(HERE, name)
         read = lambda f: open(os.path.join(folder, f), encoding="utf-8").read()
         expected = json.loads(read("expected.json"))
+        if expected.get("engine") == "postgres":
+            url = os.environ.get("GOLDCHECK_PG_URL")
+            if not url:
+                self.skipTest("set GOLDCHECK_PG_URL to a Postgres database (only TEMP tables are created)")
+            import psycopg  # pip install "psycopg[binary]"
+            con = psycopg.connect(url)
+            fixture = re.sub(r"(?m)^CREATE TABLE ", "CREATE TEMP TABLE ", read("fixture.sql"))
+            try:
+                con.execute(fixture)  # no parameters: the script may hold several statements
+                got = [[_plain(v) for v in r] for r in con.execute(read("query.sql").replace("%", "%%"), []).fetchall()]
+            finally:
+                con.rollback()
+                con.close()
+            self.assertTrue(_same(expected["rows"], got, expected["ordered"]),
+                            f"{name}: expected {expected['rows'][:5]} but got {got[:5]}")
+            return
         if expected.get("engine") == "duckdb":
             import duckdb  # pip install duckdb
             con = duckdb.connect(":memory:")
@@ -115,6 +132,13 @@ if __name__ == "__main__":
 def _still_differs(r) -> bool:
     """Rebuild the fixture from its SQL script and confirm the two queries still disagree there."""
     cx = r.counterexample
+    if getattr(cx, "engine", "sqlite") == "postgres":
+        from . import pg
+        con = pg.fixture(cx)
+        try:
+            return pg.observe(con, r.gold_sql, r.agent_sql, cx.ordered, 5.0)[0] in SILENT
+        finally:
+            con.close()
     if getattr(cx, "engine", "sqlite") == "duckdb":
         from . import duck
         con = duck.fixture(cx)

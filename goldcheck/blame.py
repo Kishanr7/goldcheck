@@ -73,9 +73,13 @@ def explain(db_path, expected_sql, actual_sql, cx, ordered=False, timeout=5.0):
     old, new = split(expected_sql), split(actual_sql)
     if not old or not new:
         return None
-    duckdb_engine = getattr(cx, "engine", "sqlite") == "duckdb"
+    engine = getattr(cx, "engine", "sqlite")
+    duckdb_engine = engine == "duckdb"
     try:
-        if duckdb_engine:
+        if engine == "postgres":
+            from . import pg
+            fixture = pg.fixture(cx)
+        elif duckdb_engine:
             from . import duck
             fixture = duck.fixture(cx)
         else:
@@ -94,8 +98,12 @@ def explain(db_path, expected_sql, actual_sql, cx, ordered=False, timeout=5.0):
                 clause = " + ".join(group)
                 full = None
                 try:
-                    con = (duck.connect_readonly(db_path) if duckdb_engine
-                           else lock_readonly(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)))
+                    if engine == "postgres":
+                        con = pg.connect_readonly(db_path)
+                    elif duckdb_engine:
+                        con = duck.connect_readonly(db_path)
+                    else:
+                        con = lock_readonly(sqlite3.connect(f"file:{db_path}?mode=ro", uri=True))
                     try:
                         full = _matches(con, expected_sql, patched, ordered, timeout)
                     finally:

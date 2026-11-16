@@ -37,7 +37,9 @@ class InputError(Exception):
 
 def connect_readonly(path: str):
     """A connection on which question SQL can only read. SQLite file, or DuckDB/Parquet/CSV/JSON."""
-    from . import duck
+    from . import duck, pg
+    if pg.is_pg(path):
+        return pg.connect_readonly(path)
     if duck.is_duck(path):
         return duck.connect_readonly(path)
     try:
@@ -61,6 +63,9 @@ def lock_readonly(con: sqlite3.Connection) -> sqlite3.Connection:
 def run_sql(con, sql, timeout: float = 5.0):
     """Return (columns, rows, error). Exactly one of rows/error is set."""
     if not isinstance(con, sqlite3.Connection):
+        if type(con).__module__.startswith("psycopg"):
+            from . import pg
+            return pg.run_sql(con, sql, timeout)
         from . import duck
         return duck.run_sql(con, sql, timeout)
     if sql is None or not str(sql).strip():

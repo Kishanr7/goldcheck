@@ -81,7 +81,7 @@ Checked SQL is treated as untrusted. In SQLite it runs on a read-only connection
 ## Try it
 
 ```
-pip install path/to/goldcheck
+pip install git+https://github.com/Kishanr7/goldcheck
 goldcheck demo --out gc-demo
 ```
 

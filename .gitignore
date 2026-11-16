@@ -12,3 +12,5 @@ tmp/
 Thumbs.db
 goldcheck-demo/
 goldcheck-report.html
+*.egg-info/
+build/

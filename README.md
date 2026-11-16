@@ -40,11 +40,11 @@ The largest case went from 1,067,081 rows to 4 in 9 seconds. The full story, inc
 
 ## Install
 
-Needs Python 3.10+. From a copy of this repository (or `git+https://github.com/Kishanr7/goldcheck` once you have access):
+Needs Python 3.10+.
 
 ```
-pip install path/to/goldcheck
-pip install "path/to/goldcheck[all]"      # optional: DuckDB, Parquet/CSV/JSON and Postgres
+pip install git+https://github.com/Kishanr7/goldcheck
+pip install "goldcheck[all] @ git+https://github.com/Kishanr7/goldcheck"   # optional: DuckDB, Parquet/CSV/JSON and Postgres
 ```
 
 That puts a `goldcheck` command on your PATH, usable from any folder. (`python -m goldcheck` does the same.) Run it from a folder you can write to, such as your Documents, not `C:\Windows\System32`: reports are written to the current folder unless you pass `--out`.

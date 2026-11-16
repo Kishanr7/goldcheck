@@ -50,7 +50,7 @@ Getting there took three versions, each driven by the benchmark:
 
 ## What the mistakes actually are
 
-I read all 99 counterexamples from the first sample and classified them (details in `research/ERROR_TAXONOMY_2026-11-16.md`; one reader's judgement):
+I read all 99 counterexamples from the first sample and classified them (details in `docs/ERROR_TAXONOMY.md`; one reader's judgement):
 
 | Kind | Share |
 |---|---|

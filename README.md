@@ -172,7 +172,7 @@ Reproduce: `python benchmarks/mutants.py`; for BIRD see `benchmarks/README.md`.
 
 ## What "correct" means
 
-Results match when they contain the same rows, ignoring column names, column order, extra columns in the checked query, and numeric differences beyond six significant digits. Order matters only when `ordered` is set. See `product/RELIABILITY_CONTRACT.md`.
+Results match when they contain the same rows, ignoring column names, column order, extra columns in the checked query, and numeric differences beyond six significant digits. Order matters only when `ordered` is set. See `docs/RELIABILITY_CONTRACT.md`.
 
 ## Limits
 
@@ -184,7 +184,7 @@ Results match when they contain the same rows, ignoring column names, column ord
 
 ## Privacy and safety
 
-No network calls, no telemetry. `--agent-cmd` runs a command you supply, with your permissions. Exported fixtures and reports contain real rows from your database. Details: `product/THREAT_MODEL.md`.
+No network calls, no telemetry. `--agent-cmd` runs a command you supply, with your permissions. Exported fixtures and reports contain real rows from your database. Details: `docs/THREAT_MODEL.md`.
 
 ## Tests
 
@@ -198,7 +198,8 @@ python -m unittest discover -s tests
 
 - [docs/WRITEUP.md](docs/WRITEUP.md): the problem, the method and the BIRD results
 - [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how the pieces fit
-- [research/](research/): the evidence trail, including the decision log and error taxonomy
+- [docs/ERROR_TAXONOMY.md](docs/ERROR_TAXONOMY.md): the 99 real mistakes, classified
+- [docs/RELIABILITY_CONTRACT.md](docs/RELIABILITY_CONTRACT.md) · [docs/THREAT_MODEL.md](docs/THREAT_MODEL.md)
 - [CHANGELOG.md](CHANGELOG.md) · [SECURITY.md](SECURITY.md) · [CONTRIBUTING.md](CONTRIBUTING.md)
 
 MIT licence. To remove it: `pip uninstall goldcheck`, then delete any reports, `gc-demo/` or exported test folders it wrote. It stores nothing elsewhere.

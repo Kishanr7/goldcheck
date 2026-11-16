@@ -1,17 +1,32 @@
 # goldcheck
 
-**A debugger for SQL that returns the wrong result: find it, see the smallest real data that proves it, pin the clause, and lock it in a test.**
+**When AI-written SQL returns the wrong number, goldcheck finds the two or three real rows that prove it and names the clause that caused it.**
 
-> Status: `PORTFOLIO-ONLY` · `UNVALIDATED`. An engineering portfolio project. No claim is made that anyone needs it, uses it, or prefers it to alternatives. Tested by its author's AI agent on Windows 11 and Linux, on fictional data and on the public BIRD benchmark (see `research/FINAL_REPORT_2026-11-16.md`).
+[![tests](https://github.com/Kishanr7/goldcheck/actions/workflows/ci.yml/badge.svg)](https://github.com/Kishanr7/goldcheck/actions/workflows/ci.yml)
+· Windows · macOS · Linux · Python 3.10+ · SQLite / Postgres / DuckDB / Parquet · zero required dependencies
 
-SQL that runs cleanly can still answer the wrong question: a chatbot that forgets a status filter, a refactor that drops a `DISTINCT`, a migration that joins on the wrong key. Nothing crashes, so nobody notices. goldcheck runs the query you trust next to the one you are checking, on your own data (SQLite, Postgres, DuckDB, Parquet, CSV or JSON), and when they disagree it tells you:
+![The smallest database that shows the difference, and the clause that causes it](docs/media/counterexample.png)
+
+SQL that runs cleanly can still answer the wrong question: a chatbot that forgets a status filter, a refactor that drops a `DISTINCT`, a migration that joins on the wrong key. Nothing crashes, so nobody notices. goldcheck runs the query you trust next to the one you're checking, on your own data, and when they disagree it tells you:
 
 1. **that** they disagree, and how (wrong values, missing rows, wrong order);
-2. **on which rows**: the database is cut down to the smallest set of *real* rows that still shows the difference, often 1–3;
-3. **in which clause**: one clause at a time is swapped for the trusted version and re-run, so "the WHERE clause" means it was proven by execution;
-4. **how to keep it fixed**: each case is exported as a standalone regression test.
+2. **on which rows**: a private copy of the database is cut down, by delta debugging, to the smallest set of *real* rows that still shows the difference;
+3. **in which clause**: clauses are swapped for the trusted version and re-run, so "the WHERE clause" is proven by execution, not guessed;
+4. **how to keep it fixed**: each case becomes a standalone regression test.
 
-Python standard library only for SQLite. DuckDB, Parquet, CSV and JSON need `pip install duckdb`; Postgres needs `pip install "psycopg[binary]"`. No model, no API key, no network calls of its own.
+## Results on real model errors
+
+On [BIRD](https://bird-bench.github.io/), a public text-to-SQL benchmark with databases of up to a million rows, ChatGPT's published answers are silently wrong 879 times. On a random sample of 100 of those, never used during development:
+
+| | |
+|---|---|
+| Shrunk to ≤10 real rows, proven minimal | **100 / 100** (99 / 100 on a second sample) |
+| Typical counterexample | **2 rows**, found in **0.27 s** |
+| Cause pinned to one or two clauses | 67% |
+
+The largest case went from 1,067,081 rows to 4 in 9 seconds. The full story, including what kinds of mistakes the AI made, is in **[docs/WRITEUP.md](docs/WRITEUP.md)**.
+
+> **Status: portfolio project, v0.5.** Built and benchmarked on public data; not yet adopted by a team in production. goldcheck is designed for places where SQL checking is automated: eval suites for chat-with-your-data products, query refactors and migrations gated in CI, and AI agents verifying their own SQL. That's what the CI exit codes, regression-test export and MCP server are for.
 
 ## Commands
 
@@ -61,15 +76,15 @@ The refactor reorders the joins (harmless) but also changes `status = 'completed
 ## Compare an old and a new query
 
 ```
-python -m goldcheck compare --db shop.sqlite --old old.sql --new new.sql
+goldcheck compare --db shop.sqlite --old old.sql --new new.sql
 ```
 
 `--old` and `--new` take a `.sql` file or the SQL itself. For many pairs use `--pairs pairs.jsonl` with one `{"id", "old", "new", "note"?, "ordered"?}` per line. Output:
 
 ```
-Shrunk 1 silent difference(s) to 3 row(s) each; see the report.
+Shrunk 1 silent difference(s) to 6 row(s) each; see the report.
 0/1 pair(s) return the same result; 1 differ (1 silently, 0 with an error in the new query).
-  pair: no column of the result holds the expected values of column 2. Smallest database: 3 row(s). Comes from the WHERE clause.
+  pair: no column of the result holds the expected values of column 2. Smallest database: 6 row(s). Comes from the WHERE clause.
 ```
 
 Exit code 0 means every pair returned the same result on this database, 1 means at least one differs, and 2 means bad input. That lets you use it as a CI gate on query refactors. Same result on one database is evidence, not proof of equivalence.
@@ -79,8 +94,8 @@ Exit code 0 means every pair returned the same result on this database, 1 means 
 1. Questions with gold SQL (`questions.json`): `[{"id": "q1", "question": "How many customers?", "gold_sql": "SELECT COUNT(*) FROM customers"}]`. Add `"ordered": true` when row order matters.
 2. The agent's SQL as JSON Lines (`{"id": "q1", "sql": "..."}` per line), or a command goldcheck calls per question:
    ```
-   python -m goldcheck run --db shop.sqlite --questions questions.json --answers answers.jsonl --shrink
-   python -m goldcheck run --db shop.sqlite --questions questions.json --agent-cmd "my-agent --sql {question}" --shrink
+   goldcheck run --db shop.sqlite --questions questions.json --answers answers.jsonl --shrink
+   goldcheck run --db shop.sqlite --questions questions.json --agent-cmd "my-agent --sql {question}" --shrink
    ```
 3. `--min-accuracy 0.8` fails a CI job below a threshold. `--json` prints machine output.
 
@@ -100,7 +115,7 @@ Point `--db` at a `.duckdb` file, a `.parquet`, `.csv` or `.json` file, or a fol
 
 ```
 pip install duckdb
-python -m goldcheck compare --db exports/ --old old.sql --new new.sql
+goldcheck compare --db exports/ --old old.sql --new new.sql
 ```
 
 Question SQL runs on goldcheck's own in-memory copy, after DuckDB's `enable_external_access = false` and `lock_configuration = true`. That blocks file reads and writes, `COPY`, `ATTACH` and extension installs, and the setting cannot be switched back. Only one `SELECT` is accepted per query, and each has a timeout. Data loaded from files is held in memory, so very large folders need a sample. Queries must be valid DuckDB SQL: SQLite-only SQL, such as selecting an ungrouped column, is rejected as an error.
@@ -109,7 +124,7 @@ Question SQL runs on goldcheck's own in-memory copy, after DuckDB's `enable_exte
 
 ```
 pip install "psycopg[binary]"
-python -m goldcheck compare --db postgresql://reader@db.internal/sales --old old.sql --new new.sql
+goldcheck compare --db postgresql://reader@db.internal/sales --old old.sql --new new.sql
 ```
 
 goldcheck never writes to your database:
@@ -122,13 +137,13 @@ goldcheck never writes to your database:
 
 ## Let a coding agent use it (MCP)
 
-`python -m goldcheck mcp` serves one tool, `compare_queries(db_path, trusted_sql, sql, ordered?, shrink?, max_seconds?)`, over MCP stdio. It returns whether the results match. When they don't, it also returns the counterexample rows, both results on them, the clause that causes the difference and a script that recreates the rows. The agent can repair its query and call again. For Claude Code:
+`goldcheck mcp` serves one tool, `compare_queries(db_path, trusted_sql, sql, ordered?, shrink?, max_seconds?)`, over MCP stdio. It returns whether the results match. When they don't, it also returns the counterexample rows, both results on them, the clause that causes the difference and a script that recreates the rows. The agent can repair its query and call again. For Claude Code:
 
 ```
-claude mcp add goldcheck -- python -m goldcheck mcp
+claude mcp add goldcheck -- goldcheck mcp
 ```
 
-Run it from the goldcheck folder, or install it so `python -m goldcheck` resolves. The same read-only, SELECT-only rules apply.
+Install goldcheck first (see Install). The same read-only, SELECT-only rules apply.
 
 ## How shrinking works
 
@@ -177,4 +192,13 @@ No network calls, no telemetry. `--agent-cmd` runs a command you supply, with yo
 python -m unittest discover -s tests
 ```
 
-MIT licence. To remove it, delete this folder and any reports, `goldcheck-demo/` or exported test folders it wrote. It stores nothing elsewhere.
+30 tests need nothing installed. 9 more cover DuckDB (`pip install duckdb`) and Postgres (set `GOLDCHECK_TEST_PG_URL` to a throwaway database). GitHub Actions runs everything on Windows, macOS and Linux with Python 3.10 and 3.13, plus a Postgres 17 service. The HTML report is checked in 11 browser setups (Windows Chrome/Edge, Mac Safari/Chrome, four iPhones including a 320 px screen, two Androids, iPad) in light and dark mode with `tools/xbrowser/report-test.js`.
+
+## More
+
+- [docs/WRITEUP.md](docs/WRITEUP.md): the problem, the method and the BIRD results
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md): how the pieces fit
+- [research/](research/): the evidence trail, including the decision log and error taxonomy
+- [CHANGELOG.md](CHANGELOG.md) · [SECURITY.md](SECURITY.md) · [CONTRIBUTING.md](CONTRIBUTING.md)
+
+MIT licence. To remove it: `pip uninstall goldcheck`, then delete any reports, `gc-demo/` or exported test folders it wrote. It stores nothing elsewhere.

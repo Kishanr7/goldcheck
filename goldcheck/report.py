@@ -33,7 +33,7 @@ main{max-width:980px;margin:0 auto;padding:28px 18px 60px}
 h1{font-size:1.7rem;margin:0 0 4px}h2{font-size:1.15rem;margin:34px 0 10px}
 .tag{display:inline-block;font:600 .72rem/1 system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;border:1px solid var(--line);padding:5px 8px;border-radius:3px;color:var(--mute)}
 .lede{color:var(--mute);margin:6px 0 22px}
-.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(200px,100%),1fr));gap:12px}
 .stat{background:var(--card);border:1px solid var(--line);border-radius:6px;padding:14px 16px}
 .stat b{display:block;font:700 2rem/1.1 system-ui,sans-serif}.stat span{color:var(--mute);font-size:.92rem}
 .stat.bad b{color:var(--bad)}.stat.ok b{color:var(--ok)}
@@ -45,7 +45,7 @@ summary{cursor:pointer;padding:11px 14px;display:flex;gap:12px;align-items:basel
 summary:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
 .v{font:700 .78rem/1 system-ui,sans-serif;padding:4px 7px;border-radius:3px;border:1px solid currentColor;white-space:nowrap}
 .v.pass{color:var(--ok)}.v.silent{color:var(--bad)}.v.loud{color:var(--warn)}
-.body{padding:0 14px 14px}.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:14px}
+.body{padding:0 14px 14px}.cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(280px,100%),1fr));gap:14px}
 pre{background:var(--bg);border:1px solid var(--line);border-radius:4px;padding:10px;overflow-x:auto;font:.82rem/1.45 ui-monospace,Consolas,monospace;white-space:pre-wrap;word-break:break-word;margin:6px 0}
 h3{font:600 .8rem/1 system-ui,sans-serif;letter-spacing:.06em;text-transform:uppercase;color:var(--mute);margin:12px 0 4px}
 .note{color:var(--mute);font-size:.9rem}
@@ -59,6 +59,8 @@ def _table(cols, rows, limit=6):
     head = "".join(f"<th scope='col'>{escape(str(c))}</th>" for c in cols)
     body = "".join("<tr>" + "".join(f"<td>{escape(str(v))}</td>" for v in r) + "</tr>" for r in rows[:limit])
     more = f"<p class='note'>Showing {limit} of {len(rows)} rows.</p>" if len(rows) > limit else ""
+    if not rows:
+        more = "<p class='note'><b>0 rows</b>: this query returns nothing here.</p>"
     return f"<div class='wrap'><table><thead><tr>{head}</tr></thead><tbody>{body}</tbody></table></div>{more}"
 
 
@@ -102,7 +104,7 @@ def render(results, summary, title="Agent evaluation", problems=(), mode="check"
     parts = [f"<!doctype html><html lang='en'><head><meta charset='utf-8'>"
              f"<meta name='viewport' content='width=device-width,initial-scale=1'>"
              f"<title>{escape(title)}</title><style>{CSS}</style></head><body><main>"]
-    parts.append(f"<span class='tag'>goldcheck {mode}</span><h1>{escape(title)}</h1>")
+    parts.append(f"<span class='tag'>goldcheck · {mode}</span><h1>{escape(title)}</h1>")
     if s["total"] == 0:
         parts.append(f"<p class='lede'>Nothing could be scored. Check the input files and the {w['expected'].lower()} SQL.</p>")
     else:

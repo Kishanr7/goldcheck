@@ -1,2 +1,2 @@
 """goldcheck: score any data chatbot's SQL answers against gold answers. Standard library only."""
-__version__ = "0.4.0"
+__version__ = "0.5.0"

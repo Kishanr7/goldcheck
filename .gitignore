@@ -14,3 +14,5 @@ goldcheck-demo/
 goldcheck-report.html
 *.egg-info/
 build/
+gc-demo/
+*-demo/

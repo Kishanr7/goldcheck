@@ -8,12 +8,13 @@ goldcheck is a small Python package with no required dependencies. Each module h
 | `shrink.py` | Find the smallest set of rows on which two queries still disagree (SQLite), and the `Counterexample` type shared by all engines |
 | `blame.py` | Split both queries into top-level clauses; swap one or two clauses for the trusted version, re-run on the counterexample, confirm on the full database |
 | `lock.py` | Export counterexamples as standalone regression tests (standard library only) |
+| `probe.py` | `check_sql` (text values not in the data, filters that remove nothing, empty results) and `describe_values`, with no gold answer needed |
 | `report.py` | One self-contained HTML file: no scripts, no external requests, light and dark themes |
 | `duck.py` | DuckDB engine: `.duckdb` files, Parquet/CSV/JSON files and folders |
 | `pg.py` | Postgres engine, read-only by construction |
-| `mcp.py` | MCP server over stdio with one tool, `compare_queries` |
+| `mcp.py` | MCP server over stdio with three tools: `check_sql`, `describe_values`, `compare_queries` |
 | `demo.py` | The fictional shop database, 12 questions and a careless agent |
-| `__main__.py` | The `goldcheck` command: `demo`, `run`, `compare`, `shrink`, `mcp` |
+| `__main__.py` | The `goldcheck` command: `demo`, `run`, `compare`, `shrink`, `check-sql`, `describe`, `mcp` |
 
 ## Data flow
 

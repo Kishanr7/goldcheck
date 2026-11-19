@@ -18,7 +18,7 @@ try:
 except ImportError:  # pragma: no cover
     psycopg = None
 
-from goldcheck import blame, core, demo, shrink
+from goldcheck import blame, core, demo, probe, shrink
 from goldcheck.__main__ import main
 
 URL = os.environ.get("GOLDCHECK_TEST_PG_URL")
@@ -101,6 +101,16 @@ class Postgres(unittest.TestCase):
         shrink.write(cx, self.questions["q08"], self.answers["q08"], out)
         self.assertTrue(cx.verified)
         self.assertEqual({t: self._count(t) for t in TABLES}, before)
+
+    def test_check_sql_and_describe(self):
+        con = core.connect_readonly(URL)
+        try:
+            r = probe.check_sql(con, "SELECT COUNT(*) FROM orders WHERE status = 'Completed'")
+            self.assertEqual(r["findings"][0]["suggestions"][0], "completed")
+            self.assertEqual(probe.describe_values(con, "orders", "status")["distinct"], 3)
+        finally:
+            con.close()
+        self.assertEqual(self._count("orders"), 300)
 
     def test_schema_qualified_names_are_refused(self):
         q = {"id": "x", "question": "?", "gold_sql": "SELECT count(*) FROM public.orders"}

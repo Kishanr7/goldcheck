@@ -23,3 +23,4 @@ Step 1 scores all 1,534 predictions with goldcheck's comparison and reports agre
 
 Committed results:
 - `bird-turbo-heldout-2026-11-16.json`: seed 777, never used while developing the shrinker.
+- `check-sql-bird-2026-11-19.json`: `check_sql` on every BIRD dev prediction (`python benchmarks/check_sql_bird.py --bird-dir BIRD --pred predict_dev.json --out results.json`).

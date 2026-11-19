@@ -7,7 +7,7 @@ import unittest
 import subprocess
 import sys
 
-from goldcheck import blame, core, demo, lock, mcp, report, shrink
+from goldcheck import blame, core, demo, lock, mcp, probe, report, shrink
 from goldcheck.__main__ import main
 
 
@@ -300,6 +300,66 @@ class Mcp(unittest.TestCase):
                                                           "trusted_sql": "SELECT 1"}}})
             self.assertEqual(json.loads(bad["content"][0]["text"])["verdict"], "sql_error")
         self.assertEqual(mcp.handle({"jsonrpc": "2.0", "id": 5, "method": "nope"})[2]["code"], -32601)
+
+
+class Probe(unittest.TestCase):
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.db, _, _ = demo.build(self.dir.name)
+        self.con = core.connect_readonly(self.db)
+
+    def tearDown(self):
+        self.con.close()
+        self.dir.cleanup()
+
+    def kinds(self, sql):
+        r = probe.check_sql(self.con, sql)
+        return r["ok"], [(f["kind"], f.get("literal"), tuple(f.get("suggestions") or ())) for f in r["findings"]]
+
+    def test_wrong_case_value_is_caught_with_suggestion(self):
+        ok, found = self.kinds("SELECT COUNT(*) FROM orders WHERE status = 'Completed'")
+        self.assertFalse(ok)
+        self.assertEqual(found[0][:2], ("value_not_found", "Completed"))
+        self.assertEqual(found[0][2][0], "completed")
+
+    def test_aliases_in_lists_like_and_negations(self):
+        ok, found = self.kinds("SELECT COUNT(*) FROM orders o WHERE o.status IN ('completed', 'shipped')")
+        self.assertEqual([f[:2] for f in found], [("value_not_found", "shipped")])
+        ok, found = self.kinds("SELECT COUNT(*) FROM customers WHERE city LIKE '%Atlantis%'")
+        self.assertEqual(found[0][0], "value_not_found")
+        ok, found = self.kinds("SELECT COUNT(*) FROM orders WHERE status <> 'done'")
+        self.assertTrue(ok)
+        self.assertEqual(found[0][0], "filter_excludes_nothing")
+
+    def test_correct_queries_stay_quiet_and_errors_are_reported(self):
+        self.assertEqual(self.kinds("SELECT COUNT(*) FROM orders WHERE status = 'completed'"), (True, []))
+        self.assertEqual(self.kinds("SELECT COUNT(*) FROM customers WHERE city LIKE '%north%'"), (True, []))
+        ok, found = self.kinds("SELECT name FROM customers WHERE id = 9999")
+        self.assertEqual(found, [("empty_result", None, ())])
+        ok, found = self.kinds("DELETE FROM orders")
+        self.assertEqual((ok, found[0][0]), (False, "sql_error"))
+
+    def test_describe_values(self):
+        d = probe.describe_values(self.con, "ORDERS", "Status")
+        self.assertEqual((d["table"], d["column"], d["distinct"]), ("orders", "status", 3))
+        self.assertEqual(d["top_values"][0], {"value": "completed", "count": 231})
+        self.assertIn("orders", [t["table"] for t in probe.describe_values(self.con)["tables"]])
+        with self.assertRaises(core.InputError):
+            probe.describe_values(self.con, "order")
+
+    def test_cli_and_mcp(self):
+        self.assertEqual(main(["check-sql", "--db", self.db, "--sql", "SELECT 1 FROM orders WHERE status = 'x'"]), 1)
+        self.assertEqual(main(["check-sql", "--db", self.db, "--sql", "SELECT 1 FROM orders WHERE status = 'pending'"]), 0)
+        self.assertEqual(main(["describe", "--db", self.db, "--table", "orders", "--column", "status"]), 0)
+        _, res, _ = mcp.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": {
+            "name": "check_sql", "arguments": {"db_path": self.db, "sql": "SELECT 1 FROM orders WHERE status = 'Pending'"}}})
+        data = json.loads(res["content"][0]["text"])
+        self.assertEqual((data["ok"], data["findings"][0]["suggestions"][0]), (False, "pending"))
+        _, res, _ = mcp.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+            "name": "describe_values", "arguments": {"db_path": self.db, "table": "orders", "column": "status"}}})
+        self.assertEqual(json.loads(res["content"][0]["text"])["distinct"], 3)
+        names = [t["name"] for t in mcp.handle({"jsonrpc": "2.0", "id": 3, "method": "tools/list"})[1]["tools"]]
+        self.assertEqual(names, ["compare_queries", "check_sql", "describe_values"])
 
 
 class Cli(unittest.TestCase):

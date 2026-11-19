@@ -23,6 +23,7 @@ On [BIRD](https://bird-bench.github.io/), a public text-to-SQL benchmark with da
 | Shrunk to ≤10 real rows, proven minimal | **100 / 100** (99 / 100 on a second sample) |
 | Typical counterexample | **2 rows**, found in **0.27 s** |
 | Cause pinned to one or two clauses | 67% |
+| Wrong answers caught by `check_sql` with **no gold answer** (all 879) | **50%**, with **0.9%** false alarms on correct answers; its suggestion alone fixes 77 |
 
 The largest case went from 1,067,081 rows to 4 in 9 seconds. The full story, including what kinds of mistakes the AI made, is in **[docs/WRITEUP.md](docs/WRITEUP.md)**.
 
@@ -36,6 +37,8 @@ The largest case went from 1,067,081 rows to 4 in 9 seconds. The full story, inc
 | `compare` | You rewrote, refactored, optimised or migrated a query (or an AI did) and want to know whether the result changed | the old query and the new one, **no gold answers** |
 | `shrink` | You want one counterexample database as a file | as `check` |
 | `--export-tests` | You want each difference as a test that fails until it is fixed | either of the above |
+| `check-sql` | A bot or person wrote a query and you have **no known-good answer**: catch text values that are not in the data (`'Completed'` vs `'completed'`, `'single'` vs `'-'`) and empty results | just the query |
+| `describe` | You (or an agent) want to see how values are really written before writing SQL | nothing |
 | `mcp` | A coding agent should check its own SQL and get the counterexample back | an MCP client |
 
 ## Install
@@ -72,6 +75,28 @@ goldcheck compare --db gc-demo/demo.sqlite --old gc-demo/old_query.sql --new gc-
 ```
 
 The refactor reorders the joins (harmless) but also changes `status = 'completed'` to `status <> 'cancelled'`, so pending orders sneak into revenue. goldcheck reports the difference, a 6-row counterexample and the guilty WHERE clause, and exits with code 1.
+
+## Check a query with no gold answer
+
+A large share of wrong answers from text-to-SQL bots are not bad SQL (42% in our BIRD sample, `docs/ERROR_TAXONOMY.md`): the bot compares a column with a value the data never contains. `check-sql` runs the query read-only and checks every text value it compares a column with:
+
+```
+goldcheck check-sql --db shop.sqlite --sql "SELECT COUNT(*) FROM orders WHERE status = 'Completed'"
+```
+
+```
+ERROR: orders.status = 'Completed': no row has this value, so this condition matches nothing
+  closest real values: 'completed'
+```
+
+It also warns when a `!=` or `NOT IN` filter removes nothing and when the result is empty, and exits 1 on errors, so a bot or a CI job can act on it. To look before writing, `describe` shows tables, columns, or one column's real values with counts:
+
+```
+goldcheck describe --db shop.sqlite --table orders --column status
+```
+
+On the 1,224 ChatGPT answers to BIRD questions that run cleanly, it flagged **50% of the wrong ones** and **0.9% of the correct ones**. When it says a value is not in the data it is right 99% of the time, and applying its top suggestion alone turned 77 wrong answers into correct ones (`benchmarks/check_sql_bird.py`). It only checks comparisons with text literals; a wrong join or aggregate needs `compare`.
+
 
 ## Compare an old and a new query
 
@@ -137,7 +162,7 @@ goldcheck never writes to your database:
 
 ## Let a coding agent use it (MCP)
 
-`goldcheck mcp` serves one tool, `compare_queries(db_path, trusted_sql, sql, ordered?, shrink?, max_seconds?)`, over MCP stdio. It returns whether the results match. When they don't, it also returns the counterexample rows, both results on them, the clause that causes the difference and a script that recreates the rows. The agent can repair its query and call again. For Claude Code:
+`goldcheck mcp` serves three tools over MCP stdio, so a chatbot or coding agent can check its own SQL before answering: **`check_sql(db_path, sql)`** (no gold answer needed: values not in the data, empty results, with the closest real values), **`describe_values(db_path, table?, column?)`** (look at real values before writing a query), and **`compare_queries(db_path, trusted_sql, sql, …)`** (when a trusted query exists: the counterexample rows, both results on them, the clause that causes the difference and a script that recreates the rows). The agent repairs its query and calls again. For Claude Code:
 
 ```
 claude mcp add goldcheck -- goldcheck mcp

@@ -12,7 +12,7 @@ try:
 except ImportError:  # pragma: no cover
     duckdb = None
 
-from goldcheck import blame, core, demo, shrink
+from goldcheck import blame, core, demo, probe, shrink
 from goldcheck.__main__ import main
 
 TABLES = ["customers", "products", "orders", "order_items", "refunds"]
@@ -93,6 +93,16 @@ class Duck(unittest.TestCase):
         cx = shrink.shrink(self.ddb, self.questions["q08"], self.answers["q08"])
         shrink.write(cx, self.questions["q08"], self.answers["q08"], out)
         self.assertTrue(cx.verified)
+
+    def test_check_sql_and_describe(self):
+        for source in (self.ddb, self.parquet):
+            con = core.connect_readonly(source)
+            try:
+                r = probe.check_sql(con, "SELECT COUNT(*) FROM orders WHERE status = 'Completed'")
+                self.assertEqual(r["findings"][0]["suggestions"][0], "completed", source)
+                self.assertEqual(probe.describe_values(con, "orders", "status")["distinct"], 3)
+            finally:
+                con.close()
 
     def test_cli_compare_and_exported_tests(self):
         locked = os.path.join(self.dir.name, "locked")

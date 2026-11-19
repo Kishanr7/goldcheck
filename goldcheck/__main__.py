@@ -117,6 +117,52 @@ def _shrink_one(args, questions, con):
     return 0 if cx.verified else 1
 
 
+def _probe(args):
+    from . import probe
+    from .core import _sql_arg
+    try:
+        con = connect_readonly(args.db)
+        try:
+            if args.cmd == "check-sql":
+                out = probe.check_sql(con, _sql_arg(args.sql), args.timeout)
+            else:
+                if args.column and not args.table:
+                    raise InputError("--column needs --table")
+                out = probe.describe_values(con, args.table, args.column, args.limit)
+        finally:
+            con.close()
+    except InputError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    if args.json:
+        print(json.dumps(out, indent=2, default=str))
+    elif args.cmd == "check-sql":
+        if not out["findings"]:
+            print("No problems found: every text value in the query exists in the data, and the result is not empty.")
+        for f in out["findings"]:
+            print(f"{f['severity'].upper()}: {f['message']}")
+            if f.get("suggestions"):
+                print("  closest real values: " + ", ".join(repr(s) for s in f["suggestions"]))
+            elif f.get("all_values"):
+                print("  values in this column: " + ", ".join(repr(s) for s in f["all_values"]))
+    elif "tables" in out:
+        for t in out["tables"]:
+            print(f"{t['table']}: {', '.join(t['columns'])}")
+    elif "columns" in out:
+        for c in out["columns"]:
+            print(f"{c['column']}: e.g. {', '.join(repr(v) for v in c['sample_values'])}")
+    else:
+        print(f"{out['table']}.{out['column']}: {out['rows']} rows, {out['distinct']} distinct, {out['nulls']} NULL, "
+              f"min {out['min']!r}, max {out['max']!r}")
+        for v in out["top_values"]:
+            print(f"  {v['value']!r}: {v['count']}")
+        if not out["all_values_shown"]:
+            print(f"  ... {out['distinct'] - len(out['top_values'])} more")
+    if args.cmd == "check-sql":
+        return 0 if out["ok"] else 1
+    return 0
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="goldcheck", description="Find, explain and lock down SQL that returns the wrong result.")
     ap.add_argument("--version", action="version", version=__version__)
@@ -163,8 +209,21 @@ def main(argv=None):
     c.add_argument("--json", action="store_true", help="print the summary as JSON")
     c.add_argument("--export-tests", metavar="DIR", help="write each counterexample as a standalone "
                    "regression test into this new folder")
-    sub.add_parser("mcp", help="serve compare_queries to coding agents over MCP (stdio)")
+    sub.add_parser("mcp", help="serve compare_queries, check_sql and describe_values to agents over MCP (stdio)")
+    cs = sub.add_parser("check-sql", help="check a query's text values against the data; no gold answer needed")
+    cs.add_argument("--db", required=True, help="SQLite/DuckDB file, Parquet/CSV/JSON file or folder, or postgresql:// URL")
+    cs.add_argument("--sql", required=True, help="the query: a .sql file or the SQL itself")
+    cs.add_argument("--timeout", type=float, default=5.0, help="seconds per query")
+    cs.add_argument("--json", action="store_true", help="print machine-readable JSON")
+    ds = sub.add_parser("describe", help="show tables, columns, or a column's real values")
+    ds.add_argument("--db", required=True, help="SQLite/DuckDB file, Parquet/CSV/JSON file or folder, or postgresql:// URL")
+    ds.add_argument("--table", help="table to describe")
+    ds.add_argument("--column", help="column to describe (needs --table)")
+    ds.add_argument("--limit", type=int, default=20, help="how many top values")
+    ds.add_argument("--json", action="store_true", help="print machine-readable JSON")
     args = ap.parse_args(argv)
+    if args.cmd in ("check-sql", "describe"):
+        return _probe(args)
     if args.cmd == "mcp":
         from .mcp import serve
         serve()

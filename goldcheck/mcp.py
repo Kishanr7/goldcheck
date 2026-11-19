@@ -25,7 +25,8 @@ TOOLS = [{
     "inputSchema": {
         "type": "object",
         "properties": {
-            "db_path": {"type": "string", "description": "Path to a SQLite database file"},
+            "db_path": {"type": "string", "description": "SQLite or DuckDB file, Parquet/CSV/JSON file or folder, "
+                                                         "or a postgresql:// URL"},
             "trusted_sql": {"type": "string", "description": "The query whose result is known to be right"},
             "sql": {"type": "string", "description": "The query to check"},
             "ordered": {"type": "boolean", "description": "Row order matters", "default": False},
@@ -34,7 +35,67 @@ TOOLS = [{
         },
         "required": ["db_path", "trusted_sql", "sql"],
     },
+}, {
+    "name": "check_sql",
+    "description": (
+        "Check a SQL query you wrote BEFORE trusting its answer, with no known-good query needed. Runs it "
+        "read-only and checks every comparison of a column with a text literal (=, !=, IN, NOT IN, LIKE): "
+        "if the database has no such value (e.g. you wrote status = 'Completed' but the data says 'completed', "
+        "or bond_type = 'single' but the data uses '-'), it returns the closest real values. Also warns when "
+        "the result is empty. Call it on every query you are about to answer from, and fix any finding."),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "db_path": {"type": "string", "description": "SQLite or DuckDB file, Parquet/CSV/JSON file or folder, "
+                                                         "or a postgresql:// URL"},
+            "sql": {"type": "string", "description": "The query to check"},
+        },
+        "required": ["db_path", "sql"],
+    },
+}, {
+    "name": "describe_values",
+    "description": (
+        "Look at the data before writing SQL. With no table: lists tables and their columns. With a table: its "
+        "columns with sample values. With a table and column: the most common values with counts, the number of "
+        "distinct values, NULLs, min and max. Use it to learn how values are actually written (codes, case, date "
+        "formats) instead of guessing."),
+    "inputSchema": {
+        "type": "object",
+        "properties": {
+            "db_path": {"type": "string", "description": "SQLite or DuckDB file, Parquet/CSV/JSON file or folder, "
+                                                         "or a postgresql:// URL"},
+            "table": {"type": "string", "description": "Table name (optional)"},
+            "column": {"type": "string", "description": "Column name (optional, needs table)"},
+            "limit": {"type": "integer", "description": "How many top values to return", "default": 20},
+        },
+        "required": ["db_path"],
+    },
 }]
+
+
+def _with_con(db_path, fn):
+    from .core import connect_readonly
+    con = connect_readonly(db_path)
+    try:
+        return fn(con)
+    finally:
+        con.close()
+
+
+def check_sql(db_path, sql):
+    from . import probe
+    out = _with_con(db_path, lambda con: probe.check_sql(con, sql))
+    out["rows"] = _preview(out["columns"], out["rows"])["rows"] if out["rows"] is not None else None
+    return out
+
+
+def describe_values(db_path, table=None, column=None, limit=20):
+    from . import probe
+    return _with_con(db_path, lambda con: probe.describe_values(con, table, column, int(limit)))
+
+
+HANDLERS = {"compare_queries": lambda a: compare_queries(**a), "check_sql": lambda a: check_sql(**a),
+            "describe_values": lambda a: describe_values(**a)}
 
 
 def _preview(cols, rows, limit=10):
@@ -94,11 +155,13 @@ def handle(msg):
     if method == "tools/list":
         return msg_id, {"tools": TOOLS}, None
     if method == "tools/call":
-        if params.get("name") != "compare_queries":
-            return msg_id, None, {"code": -32602, "message": f"Unknown tool: {params.get('name')}"}
+        name = params.get("name")
+        tool = next((t for t in TOOLS if t["name"] == name), None)
+        if tool is None:
+            return msg_id, None, {"code": -32602, "message": f"Unknown tool: {name}"}
         args = params.get("arguments") or {}
         try:
-            data = compare_queries(**{k: args[k] for k in args if k in TOOLS[0]["inputSchema"]["properties"]})
+            data = HANDLERS[name]({k: args[k] for k in args if k in tool["inputSchema"]["properties"]})
             return msg_id, {"content": [{"type": "text", "text": json.dumps(data, indent=1, default=str)}],
                             "isError": False}, None
         except Exception as exc:  # tool errors go back to the agent as results, per MCP

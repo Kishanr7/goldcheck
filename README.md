@@ -97,6 +97,16 @@ goldcheck describe --db shop.sqlite --table orders --column status
 
 On the 1,224 ChatGPT answers to BIRD questions that run cleanly, it flagged **50% of the wrong ones** and **0.9% of the correct ones**. When it says a value is not in the data it is right 99% of the time, and applying its top suggestion alone turned 77 wrong answers into correct ones (`benchmarks/check_sql_bird.py`). It also catches dates stored as text in another format than the query assumes (`refund_date >= '2026-10-01'` on a column written `DD/MM/YYYY` silently picks wrong rows). It only checks comparisons with text literals; a wrong join or aggregate needs `compare`.
 
+### When it helps, and when it doesn't
+
+We tested this in two ways, and the results differ:
+
+- **One-shot bots** (one query per question, no exploring first): this is what the BIRD numbers above measure, on answers from an older ChatGPT model. Here `check_sql` catches half of the silently wrong answers, and its suggestion alone fixes some of them.
+- **A strong model told to explore the data first:** in an informal 9-question test on a synthetic shop database with ten traps (wrong case, country and category codes, `DD/MM/YYYY` text dates, `'-'` for unknown, payment retries, mixed currencies), Claude Opus with a careful prompt and a plain run-SQL tool found every trap by itself. It did just as well as with goldcheck. Exploring first costs it many tool calls per question, though.
+- **The same model told to answer in one go:** no usable answers, but with goldcheck watching it reported 7 of the 9 as wrong instead of giving a confident `0`.
+
+So `check_sql` doesn't make a careful top model more accurate. It's a cheap check (milliseconds per query) for bots that don't take the careful path: fast, cheap or automated ones. It also leaves a record of what was checked. For a rewrite of a query you already trust, use `compare`.
+
 
 ## Compare an old and a new query
 

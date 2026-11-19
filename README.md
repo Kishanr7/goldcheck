@@ -39,7 +39,7 @@ The largest case went from 1,067,081 rows to 4 in 9 seconds. The full story, inc
 | `--export-tests` | You want each difference as a test that fails until it is fixed | either of the above |
 | `check-sql` | A bot or person wrote a query and you have **no known-good answer**: catch text values that are not in the data (`'Completed'` vs `'completed'`, `'single'` vs `'-'`) and empty results | just the query |
 | `describe` | You (or an agent) want to see how values are really written before writing SQL | nothing |
-| `mcp` | A coding agent should check its own SQL and get the counterexample back | an MCP client |
+| `mcp` | A chatbot or coding agent should check its own SQL before answering (all three checks as tools) | an MCP client |
 
 ## Install
 
@@ -160,15 +160,41 @@ goldcheck never writes to your database:
 - The counterexample is written as a `.sql` script (`--out cx.sql`). Exported regression tests read the database from `GOLDCHECK_PG_URL` and only create `TEMP` tables.
 - The connection URL is never printed or written to reports or exported files. Prefer a URL without a password plus `PGPASSWORD`, and a role that can only read the tables involved and create temporary tables.
 
-## Let a coding agent use it (MCP)
+## Plug it into a chatbot or agent (MCP)
 
-`goldcheck mcp` serves three tools over MCP stdio, so a chatbot or coding agent can check its own SQL before answering: **`check_sql(db_path, sql)`** (no gold answer needed: values not in the data, empty results, with the closest real values), **`describe_values(db_path, table?, column?)`** (look at real values before writing a query), and **`compare_queries(db_path, trusted_sql, sql, …)`** (when a trusted query exists: the counterexample rows, both results on them, the clause that causes the difference and a script that recreates the rows). The agent repairs its query and calls again. For Claude Code:
+`goldcheck mcp` is an MCP server: a small program the bot's MCP client starts next to the bot and talks to over stdin/stdout. It gives the model three tools:
+
+| Tool | When the model should call it |
+|---|---|
+| `check_sql(sql)` | Before answering from any query: catches text values that are not in the data (with the closest real ones), filters that remove nothing, empty results. No gold answer needed. |
+| `describe_values(table?, column?)` | Before writing a query: how values are really written (codes, case, date formats). |
+| `compare_queries(trusted_sql, sql)` | After rewriting a query whose original is known to be right: the smallest real rows that show any difference, and the clause that causes it. |
+
+**How it reaches the database.** goldcheck does not sit between the bot and the database, and it does not take over the bot's own connection. It opens its own connection, read-only, to the databases you name when you start it:
 
 ```
-claude mcp add goldcheck -- goldcheck mcp
+goldcheck mcp --db sales=postgresql://goldcheck_reader@db.internal/sales --db finance=postgresql://goldcheck_reader@db.internal/finance
 ```
 
-Install goldcheck first (see Install). The same read-only, SELECT-only rules apply.
+The model only ever sees and sends the names (`sales`, `finance`), never connection strings or passwords. Put the password in `PGPASSWORD` or `~/.pgpass`, not in the URL. With one database, `GOLDCHECK_DB=postgresql://...` does the same, and the model does not even need to name it. Without `--db`, the tools take a `db_path` argument instead, which suits local files on your own machine (`--allow-paths` permits both).
+
+```
+                       ┌──────────────── the bot's machine or container ────────────────┐
+user ──question──▶  bot / agent (LLM) ──tool call: check_sql(database="sales", sql)──▶ goldcheck mcp
+                       │                ◀──findings: "status='Completed' not in data; did   │   │
+                       │                    you mean 'completed'?"                           │   │ own read-only
+                       └─────────────────────────────────────────────────────────────────┘   │ connection
+                                                                                              ▼
+                                                                                         company database
+```
+
+Setup per client:
+
+- **Claude Code:** `claude mcp add goldcheck -- goldcheck mcp --db sales=postgresql://goldcheck_reader@db.internal/sales`
+- **Claude Desktop, Cursor and other MCP clients:** add a server entry with command `goldcheck` and args `["mcp", "--db", "sales=..."]`.
+- **Your own agent** (Claude Agent SDK, LangChain/LangGraph MCP adapters, the official `mcp` Python SDK): start `goldcheck mcp` as a stdio server; the tools appear like any other.
+
+For production, give goldcheck its own database role that can only `SELECT` the tables the bot uses (and, on Postgres, create temporary tables for `compare_queries`). Every query also runs read-only, single-statement and time-limited inside goldcheck, as described in Safety. The server is tested with the official MCP Python SDK on Windows, macOS and Linux.
 
 ## How shrinking works
 
@@ -217,7 +243,7 @@ No network calls, no telemetry. `--agent-cmd` runs a command you supply, with yo
 python -m unittest discover -s tests
 ```
 
-30 tests need nothing installed. 9 more cover DuckDB (`pip install duckdb`) and Postgres (set `GOLDCHECK_TEST_PG_URL` to a throwaway database). GitHub Actions runs everything on Windows, macOS and Linux with Python 3.10 and 3.13, plus a Postgres 17 service. The HTML report is checked in 11 browser setups (Windows Chrome/Edge, Mac Safari/Chrome, four iPhones including a 320 px screen, two Androids, iPad) in light and dark mode with `tools/xbrowser/report-test.js`.
+42 of the 55 tests need nothing installed. The rest cover DuckDB (`pip install duckdb`), the official MCP client (`pip install mcp`) and Postgres (set `GOLDCHECK_TEST_PG_URL` to a throwaway database). GitHub Actions runs everything on Windows, macOS and Linux with Python 3.10 and 3.13, plus a Postgres 17 service. The HTML report is checked in 11 browser setups (Windows Chrome/Edge, Mac Safari/Chrome, four iPhones including a 320 px screen, two Androids, iPad) in light and dark mode with `tools/xbrowser/report-test.js`.
 
 ## More
 

@@ -181,6 +181,7 @@ def check_sql(con, sql, timeout=5.0):
     aliases = _aliases(sql, tables)
     in_query = sorted(set(aliases.values()))
     col_cache = {}
+    checked = []
     for qual, col, op, literals in _comparisons(sql):
         if qual:
             cands = [aliases[qual.lower()]] if qual.lower() in aliases else []
@@ -204,23 +205,40 @@ def check_sql(con, sql, timeout=5.0):
         for literal in literals:
             pred = f"{_q(column)} {'LIKE' if like else '='} {_sql_str(literal)}"
             _, count, cerr = run_sql(con, f"SELECT COUNT(*) FROM {_q(table)} WHERE {pred}", timeout)
-            if cerr or count[0][0]:
+            if cerr:
                 continue
-            _, vals, verr = run_sql(con, f"SELECT DISTINCT {_q(column)} FROM {_q(table)} "
-                                         f"WHERE {_q(column)} IS NOT NULL LIMIT {VALUE_LIMIT}", timeout)
-            vals = [v[0] for v in (vals or [])]
-            suggestions = _suggest(literal.strip("%"), vals) if not verr else []
-            finding = {
-                "severity": "warning" if negated else "error",
-                "kind": "filter_excludes_nothing" if negated else "value_not_found",
-                "table": table, "column": column, "operator": op, "literal": literal,
-                "message": (f"{table}.{column} {op} '{literal}': no row has this value"
-                            + (", so this condition removes nothing" if negated else ", so this condition matches nothing")),
-                "suggestions": suggestions,
-            }
-            if len(vals) <= SMALL_DOMAIN:
-                finding["all_values"] = sorted(map(str, vals))
-            findings.append(finding)
+            checked.append((table, column, op, literal, negated, count[0][0] > 0, op in ("IN", "NOT IN")))
+    has_or = re.search(r"\bOR\b", re.sub(_STR, "''", sql), re.I) is not None
+    matched = {(t, c) for t, c, _op, _lit_, neg, hit, _in in checked if hit and not neg}
+    for table, column, op, literal, negated, hit, from_in in checked:
+        if hit:
+            continue
+        _, vals, verr = run_sql(con, f"SELECT DISTINCT {_q(column)} FROM {_q(table)} "
+                                     f"WHERE {_q(column)} IS NOT NULL LIMIT {VALUE_LIMIT}", timeout)
+        vals = [v[0] for v in (vals or [])]
+        suggestions = _suggest(literal.strip("%"), vals) if not verr else []
+        # A value that is one of several alternatives (OR / IN) while another alternative for the
+        # same column does match, or a defensive empty string, does not make the query wrong.
+        alternative = not negated and ((table, column) in matched and (has_or or from_in) or literal == "")
+        shown = literal if len(literal) <= 80 else literal[:77] + "..."
+        if negated:
+            tail = ", so this condition removes nothing"
+        elif alternative:
+            tail = "; it looks like an unused alternative, since the other values of this condition do match"
+            if literal == "":
+                tail = "; an empty-string check like this is often defensive"
+        else:
+            tail = ", so this condition matches nothing"
+        finding = {
+            "severity": "warning" if negated or alternative else "error",
+            "kind": "filter_excludes_nothing" if negated else "value_not_found",
+            "table": table, "column": column, "operator": op, "literal": literal,
+            "message": f"{table}.{column} {op} '{shown}': no row has this value{tail}",
+            "suggestions": suggestions,
+        }
+        if len(vals) <= SMALL_DOMAIN:
+            finding["all_values"] = sorted(map(str, vals))
+        findings.append(finding)
     if not rows or all(v is None for r in rows for v in r):
         findings.append({"severity": "warning", "kind": "empty_result",
                          "message": "the query returns no rows" if not rows else "the query returns only NULL"})

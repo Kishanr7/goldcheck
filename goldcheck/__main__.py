@@ -163,7 +163,17 @@ def _probe(args):
     return 0
 
 
+def _safe_console():
+    """Never crash on output a console code page cannot show (cp1252/cp437 with Chinese or emoji)."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="replace")
+        except (AttributeError, ValueError):
+            pass
+
+
 def main(argv=None):
+    _safe_console()
     ap = argparse.ArgumentParser(prog="goldcheck", description="Find, explain and lock down SQL that returns the wrong result.")
     ap.add_argument("--version", action="version", version=__version__)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -209,7 +219,12 @@ def main(argv=None):
     c.add_argument("--json", action="store_true", help="print the summary as JSON")
     c.add_argument("--export-tests", metavar="DIR", help="write each counterexample as a standalone "
                    "regression test into this new folder")
-    sub.add_parser("mcp", help="serve compare_queries, check_sql and describe_values to agents over MCP (stdio)")
+    m = sub.add_parser("mcp", help="serve check_sql, describe_values and compare_queries to agents over MCP (stdio)")
+    m.add_argument("--db", action="append", metavar="NAME=PATH_OR_URL",
+                   help="a database the agent may use, by name; repeatable. The agent only ever sees the name. "
+                        "GOLDCHECK_DB=PATH_OR_URL adds one named 'default'.")
+    m.add_argument("--allow-paths", action="store_true",
+                   help="with --db: also let the agent pass its own db_path")
     cs = sub.add_parser("check-sql", help="check a query's text values against the data; no gold answer needed")
     cs.add_argument("--db", required=True, help="SQLite/DuckDB file, Parquet/CSV/JSON file or folder, or postgresql:// URL")
     cs.add_argument("--sql", required=True, help="the query: a .sql file or the SQL itself")
@@ -225,8 +240,14 @@ def main(argv=None):
     if args.cmd in ("check-sql", "describe"):
         return _probe(args)
     if args.cmd == "mcp":
-        from .mcp import serve
-        serve()
+        from . import mcp
+        try:
+            dbs = mcp.parse_db_args(args.db)
+        except ValueError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            return 2
+        mcp.configure(dbs, True if args.allow_paths else None)
+        mcp.serve()
         return 0
     if args.cmd == "compare" and args.old and not args.new:
         ap.error("--old needs --new")

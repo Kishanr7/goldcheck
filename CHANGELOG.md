@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.7.0 (2026-11-19)
+- MCP: databases are configured when the server starts (`goldcheck mcp --db NAME=URL`, or `GOLDCHECK_DB`); the model only sees and sends names, never connection strings or passwords. Raw `db_path` is refused unless `--allow-paths`.
+- MCP hardening: malformed messages, non-object params, missing or wrongly typed arguments get clear errors; one bad message can no longer stop the server; input and output are UTF-8 on every console.
+- `check_sql`: an unused alternative (`x = 'a' OR x = 'b'` where only one exists, or a defensive `= ''`) is now a warning, not an error. On BIRD's 1,513 correct gold queries no false error remains. Long values are shortened in messages.
+- CLI: no crash when a value cannot be shown on the console's code page (Chinese, emoji on cp1252/cp437).
+- Tested against the official MCP Python SDK.
+
 ## 0.6.0 (2026-11-19)
 - `check-sql` / MCP `check_sql`: catches text values a query compares with that are not in the data (with the closest real values), filters that remove nothing, and empty results. No gold answer needed. On BIRD: flags 50% of ChatGPT's silently wrong answers with 0.9% false alarms; its top suggestion alone fixes 77.
 - `describe` / MCP `describe_values`: tables, columns, or a column's real values with counts.

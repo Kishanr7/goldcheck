@@ -284,8 +284,8 @@ class Mcp(unittest.TestCase):
                                  "params": {"protocolVersion": "2025-06-18"}})
         self.assertEqual(init["protocolVersion"], "2025-06-18")
         self.assertIsNone(mcp.handle({"jsonrpc": "2.0", "method": "notifications/initialized"}))
-        self.assertEqual(mcp.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})[1]["tools"][0]["name"],
-                         "compare_queries")
+        self.assertIn("compare_queries",
+                      [t["name"] for t in mcp.handle({"jsonrpc": "2.0", "id": 2, "method": "tools/list"})[1]["tools"]])
         with tempfile.TemporaryDirectory() as d:
             db, _, _ = demo.build(d)
             _, res, _ = mcp.handle({"jsonrpc": "2.0", "id": 3, "method": "tools/call", "params": {
@@ -359,7 +359,109 @@ class Probe(unittest.TestCase):
             "name": "describe_values", "arguments": {"db_path": self.db, "table": "orders", "column": "status"}}})
         self.assertEqual(json.loads(res["content"][0]["text"])["distinct"], 3)
         names = [t["name"] for t in mcp.handle({"jsonrpc": "2.0", "id": 3, "method": "tools/list"})[1]["tools"]]
-        self.assertEqual(names, ["compare_queries", "check_sql", "describe_values"])
+        self.assertEqual(sorted(names), ["check_sql", "compare_queries", "describe_values"])
+
+
+class McpServer(unittest.TestCase):
+    """The MCP server in the setting it is built for: configured databases, untrusted callers."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.db, _, _ = demo.build(self.dir.name)
+        mcp.configure({"shop": self.db, "pgsales": "postgresql://reader:s3cret-pw@db.internal/sales"})
+
+    def tearDown(self):
+        mcp.configure({})
+        self.dir.cleanup()
+
+    def call(self, name, args):
+        _, res, err = mcp.handle({"jsonrpc": "2.0", "id": 9, "method": "tools/call",
+                                  "params": {"name": name, "arguments": args}})
+        self.assertIsNone(err)
+        return res["isError"], res["content"][0]["text"]
+
+    def test_tools_list_shows_names_never_connection_strings(self):
+        listing = json.dumps(mcp.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/list"}))
+        self.assertNotIn("s3cret-pw", listing)
+        self.assertNotIn("db.internal", listing)
+        self.assertNotIn("demo.sqlite", listing)
+        tool = mcp.tool_list()[0]
+        self.assertEqual(tool["inputSchema"]["properties"]["database"]["enum"], ["pgsales", "shop"])
+        self.assertNotIn("db_path", tool["inputSchema"]["properties"])
+        self.assertIn("database", tool["inputSchema"]["required"])
+
+    def test_named_database_works_and_raw_paths_are_refused(self):
+        bad, text = self.call("check_sql", {"database": "shop", "sql": "SELECT 1 FROM orders WHERE status = 'Done'"})
+        self.assertFalse(bad)
+        self.assertEqual(json.loads(text)["findings"][0]["kind"], "value_not_found")
+        bad, text = self.call("check_sql", {"db_path": self.db, "sql": "SELECT 1"})
+        self.assertTrue(bad)
+        self.assertIn("only serves its configured databases", text)
+        bad, text = self.call("check_sql", {"database": "nope", "sql": "SELECT 1"})
+        self.assertTrue(bad)
+        self.assertIn("pgsales, shop", text)
+        bad, text = self.call("check_sql", {"sql": "SELECT 1"})
+        self.assertTrue(bad)
+        self.assertIn("missing `database`", text)
+
+    def test_single_database_needs_no_name_and_allow_paths(self):
+        mcp.configure({"shop": self.db})
+        self.assertEqual(mcp.tool_list()[0]["inputSchema"]["required"], ["sql"])
+        bad, _ = self.call("describe_values", {"table": "orders", "column": "status"})
+        self.assertFalse(bad)
+        mcp.configure({"shop": self.db}, allow_paths=True)
+        bad, _ = self.call("describe_values", {"db_path": self.db})
+        self.assertFalse(bad)
+
+    def test_bad_arguments_get_clear_errors_not_crashes(self):
+        for args, expect in [({"database": "shop"}, "missing `sql`"),
+                             ({"database": "shop", "sql": 42}, "`sql` must be a string"),
+                             ({"database": "shop", "sql": ""}, "missing `sql`"),
+                             ({"database": "shop", "sql": "DROP TABLE orders"}, "sql_error")]:
+            bad, text = self.call("check_sql", args)
+            self.assertIn(expect, text, args)
+        bad, text = self.call("describe_values", {"database": "shop", "column": "status"})
+        self.assertIn("`column` needs `table`", text)
+        bad, text = self.call("describe_values", {"database": "shop", "table": "orders", "limit": "lots"})
+        self.assertIn("`limit` must be a whole number", text)
+        bad, text = self.call("compare_queries", {"database": "shop", "sql": "SELECT 1"})
+        self.assertIn("missing `trusted_sql`", text)
+        _, res, _ = mcp.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                "params": {"name": "check_sql", "arguments": ["x"]}})
+        self.assertTrue(res["isError"])
+
+    def test_malformed_protocol_messages(self):
+        self.assertEqual(mcp.handle([1, 2])[2]["code"], -32600)
+        self.assertEqual(mcp.handle(7)[2]["code"], -32600)
+        self.assertEqual(mcp.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call", "params": [1]})[2]["code"], -32602)
+        self.assertEqual(mcp.handle({"jsonrpc": "2.0", "id": 1, "method": "tools/call",
+                                     "params": {"name": "rm_rf"}})[2]["code"], -32602)
+        self.assertEqual(mcp.handle({"jsonrpc": "2.0", "id": 1, "method": "nope"})[2]["code"], -32601)
+
+    def test_server_process_survives_garbage_and_speaks_utf8(self):
+        lines = ["not json", "[1,2]", "{}", "7",
+                 json.dumps({"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {"protocolVersion": "2025-06-18"}}),
+                 json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}),
+                 json.dumps({"jsonrpc": "2.0", "id": 2, "method": "tools/call", "params": {
+                     "name": "check_sql", "arguments": {"sql": "SELECT 1 FROM orders WHERE status = '完成'"}}},
+                     ensure_ascii=False)]
+        env = dict(os.environ, PYTHONIOENCODING="cp1252")
+        p = subprocess.run([sys.executable, "-m", "goldcheck", "mcp", "--db", f"shop={self.db}"],
+                           input=("\n".join(lines) + "\n").encode("utf-8"), capture_output=True, env=env, timeout=60)
+        replies = [json.loads(l) for l in p.stdout.decode("utf-8").splitlines() if l.strip()]
+        self.assertEqual([r.get("error", {}).get("code") for r in replies[:3]], [-32700, -32600, -32600])
+        final = json.loads(replies[-1]["result"]["content"][0]["text"])
+        self.assertEqual(final["findings"][0]["literal"], "完成")
+        self.assertNotIn("demo.sqlite", p.stdout.decode("utf-8"))
+
+    def test_db_argument_parsing(self):
+        self.assertEqual(mcp.parse_db_args(["a=x.sqlite", "b = postgresql://u@h/d"], env={}),
+                         {"a": "x.sqlite", "b": "postgresql://u@h/d"})
+        self.assertEqual(mcp.parse_db_args([], env={"GOLDCHECK_DB": "y.duckdb"}), {"default": "y.duckdb"})
+        for bad in (["noequals"], ["=x"], ["a="]):
+            with self.assertRaises(ValueError):
+                mcp.parse_db_args(bad, env={})
+        self.assertEqual(main(["mcp", "--db", "broken"]), 2)
 
 
 class Cli(unittest.TestCase):

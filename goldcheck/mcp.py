@@ -37,7 +37,8 @@ _TOOLS = [{
         "Check a SQL query you wrote BEFORE trusting its answer, with no known-good query needed. Runs it "
         "read-only and checks every comparison of a column with a text literal (=, !=, IN, NOT IN, LIKE): "
         "if the database has no such value (e.g. you wrote status = 'Completed' but the data says 'completed', "
-        "or bond_type = 'single' but the data uses '-'), it returns the closest real values. Also warns when "
+        "or bond_type = 'single' but the data uses '-'), it returns the closest real values. Also catches dates "
+        "compared in the wrong text format (e.g. >= '2026-10-01' on a column written DD/MM/YYYY) and warns when "
         "the result is empty. Call it on every query you are about to answer from, and fix any error finding."),
     "properties": {"sql": {"type": "string", "description": "The query to check"}},
     "required": ["sql"],

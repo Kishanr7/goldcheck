@@ -362,6 +362,79 @@ class Probe(unittest.TestCase):
         self.assertEqual(sorted(names), ["check_sql", "compare_queries", "describe_values"])
 
 
+class ProbeCodesAndDates(unittest.TestCase):
+    """Short codes ('GB', not 'UK') and dates stored as text in another format."""
+
+    def setUp(self):
+        self.dir = tempfile.TemporaryDirectory()
+        self.db = os.path.join(self.dir.name, "t.sqlite")
+        con = sqlite3.connect(self.db)
+        con.execute("CREATE TABLE c (id INTEGER, country TEXT, sex TEXT)")
+        con.executemany("INSERT INTO c VALUES (?,?,?)",
+                        [(i, ["GB", "US", "IN", "DE"][i % 4], ["M", "F"][i % 2]) for i in range(40)])
+        con.execute("CREATE TABLE r (id INTEGER, uk_day TEXT, iso_day TEXT, us_day TEXT, ts TEXT, note TEXT)")
+        con.executemany("INSERT INTO r VALUES (?,?,?,?,?,?)", [
+            (i, f"{d:02d}/{m:02d}/2026", f"2026-{m:02d}-{d:02d}", f"{m:02d}/{d:02d}/2026",
+             f"2026-{m:02d}-{d:02d} 10:00:00", f"note {i}")
+            for i, (d, m) in enumerate((d, m) for m in (1, 9, 10, 11) for d in (3, 14, 25))])
+        con.commit()
+        con.close()
+        self.con = core.connect_readonly(self.db)
+
+    def tearDown(self):
+        self.con.close()
+        self.dir.cleanup()
+
+    def found(self, sql):
+        r = probe.check_sql(self.con, sql)
+        return r["ok"], r["findings"]
+
+    def test_short_codes_get_no_misleading_suggestion(self):
+        ok, f = self.found("SELECT COUNT(*) FROM c WHERE country = 'UK'")
+        self.assertFalse(ok)
+        self.assertEqual(f[0]["suggestions"], [])
+        self.assertEqual(f[0]["all_values"], ["DE", "GB", "IN", "US"])
+        self.assertIn("may use codes", f[0]["message"])
+        # Case-only and contained matches still work for short codes.
+        self.assertEqual(self.found("SELECT 1 FROM c WHERE country = 'gb'")[1][0]["suggestions"], ["GB"])
+        self.assertEqual(self.found("SELECT 1 FROM c WHERE sex = 'm'")[1][0]["suggestions"], ["M"])
+        # A longer word that contains a code still points to it ('India' -> 'IN').
+        self.assertEqual(self.found("SELECT 1 FROM c WHERE country = 'India'")[1][0]["suggestions"], ["IN"])
+        self.assertNotIn("may use codes", self.found("SELECT 1 FROM c WHERE country <> 'XX'")[1][0]["message"])
+
+    def test_range_on_text_dates_in_other_formats_is_an_error(self):
+        for sql, label in [
+            ("SELECT COUNT(*) FROM r WHERE uk_day >= '2026-10-01'", "DD/MM/YYYY"),
+            ("SELECT COUNT(*) FROM r WHERE uk_day BETWEEN '01/10/2026' AND '31/10/2026'", "DD/MM/YYYY"),
+            ("SELECT COUNT(*) FROM r x WHERE x.us_day < '2026-10-01'", "MM/DD/YYYY"),
+            ("SELECT COUNT(*) FROM r WHERE iso_day > '01/10/2026'", "YYYY-MM-DD"),
+            ("SELECT COUNT(*) FROM r WHERE iso_day >= '2026/10/01'", "YYYY-MM-DD"),
+        ]:
+            ok, f = self.found(sql)
+            self.assertFalse(ok, sql)
+            self.assertEqual((f[0]["kind"], f[0]["value_format"]), ("date_format_mismatch", label), sql)
+
+    def test_well_formed_date_filters_stay_quiet(self):
+        for sql in ["SELECT COUNT(*) FROM r WHERE iso_day >= '2026-10-01' AND iso_day < '2026-11-01'",
+                    "SELECT COUNT(*) FROM r WHERE ts BETWEEN '2026-09-01' AND '2026-10-31 23:59:59'",
+                    "SELECT COUNT(*) FROM r WHERE ts LIKE '2026-10%'",
+                    "SELECT COUNT(*) FROM r WHERE uk_day LIKE '%/10/2026'",
+                    "SELECT COUNT(*) FROM r WHERE note > 'note 3'",
+                    "SELECT COUNT(*) FROM r WHERE id > 3 AND id <> 5",
+                    "SELECT COUNT(*) FROM r WHERE substr(uk_day, 7, 4) || substr(uk_day, 4, 2) >= '202610'"]:
+            self.assertEqual(self.found(sql), (True, []), sql)
+
+    def test_equality_on_text_dates_names_the_real_format(self):
+        ok, f = self.found("SELECT SUM(id) FROM r WHERE uk_day LIKE '2026-10%'")
+        self.assertFalse(ok)
+        self.assertEqual((f[0]["kind"], f[0]["value_format"], f[0]["suggestions"]),
+                         ("value_not_found", "DD/MM/YYYY", []))
+        self.assertIn("e.g. '", f[0]["message"])
+        # Same format, a date that simply is not there: an ordinary miss, no format note.
+        ok, f = self.found("SELECT 1 FROM r WHERE iso_day = '2026-12-24'")
+        self.assertNotIn("value_format", f[0])
+
+
 class McpServer(unittest.TestCase):
     """The MCP server in the setting it is built for: configured databases, untrusted callers."""
 

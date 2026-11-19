@@ -44,7 +44,8 @@ def _one(job):
     res = probe.check_sql(con, pred, timeout)
     kinds = [f["kind"] for f in res["findings"]]
     out.update(value_not_found=kinds.count("value_not_found"), excludes_nothing=kinds.count("filter_excludes_nothing"),
-               empty_result="empty_result" in kinds, seconds=round(time.monotonic() - started, 2))
+               empty_result="empty_result" in kinds, date_format=kinds.count("date_format_mismatch"),
+               seconds=round(time.monotonic() - started, 2))
     # Apply the top suggestion for every flagged literal and re-score against gold.
     fixed = pred
     applied = 0
@@ -91,9 +92,11 @@ def main(argv=None):
         "value_not_found_on_correct": rate(right, "value_not_found"),
         "empty_result_on_wrong": rate(wrong, "empty_result"),
         "empty_result_on_correct": rate(right, "empty_result"),
-        "any_flag_on_wrong": {"count": sum(1 for r in wrong if r.get("value_not_found") or r.get("empty_result")),
+        "date_format_mismatch_on_wrong": rate(wrong, "date_format"),
+        "date_format_mismatch_on_correct": rate(right, "date_format"),
+        "any_flag_on_wrong": {"count": sum(1 for r in wrong if r.get("value_not_found") or r.get("empty_result") or r.get("date_format")),
                               "of": len(wrong)},
-        "any_flag_on_correct": {"count": sum(1 for r in right if r.get("value_not_found") or r.get("empty_result")),
+        "any_flag_on_correct": {"count": sum(1 for r in right if r.get("value_not_found") or r.get("empty_result") or r.get("date_format")),
                                 "of": len(right)},
         "precision_of_value_not_found": round(len(flagged_wrong) / max(1, len(flagged_wrong) + rate(right, "value_not_found")["count"]), 3),
         "top_suggestion_fixes_wrong_answer": {"count": len(fixed), "of_flagged_wrong": len(flagged_wrong),

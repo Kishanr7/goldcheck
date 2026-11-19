@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.8.0 (2026-11-19)
+- `check_sql`: dates stored as text in another format are caught. A range filter (`<`, `>`, `BETWEEN`) on a text column written `DD/MM/YYYY` or `MM/DD/YYYY`, or with a literal written differently from the column (`'2026/10/01'` against `2026-10-01`), is an error (`date_format_mismatch`): text order is not date order there, so such a query returns wrong rows without any sign. A missing date in another format (`LIKE '2026-10%'` against `DD/MM/YYYY`) now names the column's real format and an example. On BIRD: no false alarm on the 1,513 correct gold queries or the 345 correct ChatGPT answers.
+- `check_sql`: codes of three letters or fewer get no spelling-distance suggestions (`'UK'` used to suggest `'US'`; the data says `'GB'`). Case-only and contained matches still work (`'gb'` → `GB`, `'India'` → `IN`); otherwise the finding lists every real value and says the column may use codes. BIRD numbers unchanged.
+
 ## 0.7.0 (2026-11-19)
 - MCP: databases are configured when the server starts (`goldcheck mcp --db NAME=URL`, or `GOLDCHECK_DB`); the model only sees and sends names, never connection strings or passwords. Raw `db_path` is refused unless `--allow-paths`.
 - MCP hardening: malformed messages, non-object params, missing or wrongly typed arguments get clear errors; one bad message can no longer stop the server; input and output are UTF-8 on every console.

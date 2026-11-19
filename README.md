@@ -95,7 +95,7 @@ It also warns when a `!=` or `NOT IN` filter removes nothing and when the result
 goldcheck describe --db shop.sqlite --table orders --column status
 ```
 
-On the 1,224 ChatGPT answers to BIRD questions that run cleanly, it flagged **50% of the wrong ones** and **0.9% of the correct ones**. When it says a value is not in the data it is right 99% of the time, and applying its top suggestion alone turned 77 wrong answers into correct ones (`benchmarks/check_sql_bird.py`). It only checks comparisons with text literals; a wrong join or aggregate needs `compare`.
+On the 1,224 ChatGPT answers to BIRD questions that run cleanly, it flagged **50% of the wrong ones** and **0.9% of the correct ones**. When it says a value is not in the data it is right 99% of the time, and applying its top suggestion alone turned 77 wrong answers into correct ones (`benchmarks/check_sql_bird.py`). It also catches dates stored as text in another format than the query assumes (`refund_date >= '2026-10-01'` on a column written `DD/MM/YYYY` silently picks wrong rows). It only checks comparisons with text literals; a wrong join or aggregate needs `compare`.
 
 
 ## Compare an old and a new query
@@ -166,7 +166,7 @@ goldcheck never writes to your database:
 
 | Tool | When the model should call it |
 |---|---|
-| `check_sql(sql)` | Before answering from any query: catches text values that are not in the data (with the closest real ones), filters that remove nothing, empty results. No gold answer needed. |
+| `check_sql(sql)` | Before answering from any query: catches text values that are not in the data (with the closest real ones), dates compared in the wrong text format, filters that remove nothing, empty results. No gold answer needed. |
 | `describe_values(table?, column?)` | Before writing a query: how values are really written (codes, case, date formats). |
 | `compare_queries(trusted_sql, sql)` | After rewriting a query whose original is known to be right: the smallest real rows that show any difference, and the clause that causes it. |
 

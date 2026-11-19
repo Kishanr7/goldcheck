@@ -102,7 +102,7 @@ On the 1,224 ChatGPT answers to BIRD questions that run cleanly, it flagged **50
 We tested this in two ways, and the results differ:
 
 - **One-shot bots** (one query per question, no exploring first): this is what the BIRD numbers above measure, on answers from an older ChatGPT model. Here `check_sql` catches half of the silently wrong answers, and its suggestion alone fixes some of them.
-- **A strong model told to explore the data first:** in an informal 9-question test on a synthetic shop database with ten traps (wrong case, country and category codes, `DD/MM/YYYY` text dates, `'-'` for unknown, payment retries, mixed currencies), Claude Opus with a careful prompt and a plain run-SQL tool found every trap by itself. It did just as well as with goldcheck. Exploring first costs it many tool calls per question, though.
+- **A strong model told to explore the data first:** in an informal 9-question test ([setup and per-question results](docs/DEMO.md)) on a synthetic shop database with ten traps (wrong case, country and category codes, `DD/MM/YYYY` text dates, `'-'` for unknown, payment retries, mixed currencies), Claude Opus with a careful prompt and a plain run-SQL tool found every trap by itself. It did just as well as with goldcheck. Exploring first costs it many tool calls per question, though.
 - **The same model told to answer in one go:** no usable answers, but with goldcheck watching it reported 7 of the 9 as wrong instead of giving a confident `0`.
 
 So `check_sql` doesn't make a careful top model more accurate. It's a cheap check (milliseconds per query) for bots that don't take the careful path: fast, cheap or automated ones. It also leaves a record of what was checked. For a rewrite of a query you already trust, use `compare`.
